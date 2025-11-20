@@ -4,40 +4,41 @@ from anthropic import Anthropic
 
 logger = logging.getLogger(__name__)
 
-# Load Claude API key from Railway
+# Load Claude API Key from Railway
 CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY")
 if not CLAUDE_API_KEY:
     raise RuntimeError("CLAUDE_API_KEY env var is missing")
 
-# Initialize Claude client
+# Initialize Anthropic client
 client = Anthropic(api_key=CLAUDE_API_KEY)
 
 
 def get_claude_output(youtube_url: str) -> dict:
     """
-    Sends the YouTube URL to Claude and returns:
+    Sends a YouTube URL to Claude (Haiku model) and returns:
       - title
       - description
       - tts_script
+    All in JSON format.
     """
 
-    logger.info("Calling Claude for YT analysis...")
+    logger.info("Calling Claude (Haiku)…")
 
     prompt = f"""
-You are Leninware, an automated pipeline tool.
+You are Leninware.
 
-The user will send ONLY a YouTube URL.
+The user will only give you a YouTube URL.
 You MUST:
 
-1. Retrieve the transcript (use your internal tools).
-2. Summarize the content into:
-   - A short, punchy YouTube TITLE.
-   - A brief YouTube DESCRIPTION (1–2 sentences).
-3. Generate a strong, clear, high-energy, female-voiced TTS SCRIPT suitable for a 1-minute YouTube Short.
-4. End the TTS script with the line:
+1. Retrieve the YouTube transcript using your internal tools.
+2. Create:
+   - a punchy YouTube TITLE
+   - a brief DESCRIPTION (1–2 sentences)
+   - a TTS SCRIPT for a ~1 minute YouTube Short
+3. End the TTS script with the line:
    "Real comrades like and subscribe."
 
-Return your output in **valid JSON only**, with EXACTLY these fields:
+Return ONLY VALID JSON in this exact shape:
 
 {{
   "title": "...",
@@ -51,14 +52,14 @@ Now process this video:
 
     try:
         response = client.messages.create(
-            model="claude-3-5-sonnet-latest",
+            model="claude-3-haiku-latest",    # <-- works for all API accounts
             max_tokens=1500,
             messages=[
                 {"role": "user", "content": prompt}
             ]
         )
 
-        # Claude returns a list of content blocks. We want the text of the first one.
+        # Extract text content (Haiku returns a content list)
         raw_text = response.content[0].text.strip()
 
         import json
