@@ -52,14 +52,13 @@ Now process this video:
 
     try:
         response = client.messages.create(
-            model="claude-3-haiku-latest",    # <-- works for all API accounts
+            model="claude-3-haiku-20240307",
             max_tokens=1500,
             messages=[
                 {"role": "user", "content": prompt}
             ]
         )
 
-        # Extract text content (Haiku returns a content list)
         raw_text = response.content[0].text.strip()
 
         import json
