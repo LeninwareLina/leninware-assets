@@ -13,22 +13,20 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 
 def generate_tts_audio(tts_script: str, output_path="tts_output.mp3") -> str:
     """
-    Generate TTS audio using OpenAI's voice.
-    We use:
+    Generate TTS audio using OpenAI's model.
+    Uses:
       - model: gpt-4o-mini-tts
-      - voice: alloy (female-leaning voice)
-      - speed: 1.2x (fast pacing for Shorts)
-    Saves output to a file and returns the path.
+      - voice: alloy (female-ish)
+      - speed: 1.2x
     """
 
     logger.info("Generating TTS audio at 1.2x speed...")
 
     response = client.audio.speech.create(
         model="gpt-4o-mini-tts",
-        voice="alloy",      # female-type voice
+        voice="alloy",
         input=tts_script,
-        speed=1.2,
-        format="mp3"
+        speed=1.2
     )
 
     audio_bytes = response.read()
@@ -36,5 +34,5 @@ def generate_tts_audio(tts_script: str, output_path="tts_output.mp3") -> str:
     with open(output_path, "wb") as f:
         f.write(audio_bytes)
 
-    logger.info(f"TTS saved: {output_path}")
+    logger.info(f"TTS audio saved to {output_path}")
     return output_path
