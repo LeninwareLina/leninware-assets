@@ -11,7 +11,7 @@ if not TRANSCRIPT_API_KEY:
     raise ValueError("TRANSCRIPT_API_KEY is missing. Add it in Railway variables.")
 
 # Base URL for TranscriptAPI – adjust if their docs say otherwise
-BASE_URL = "https://api.transcriptapi.com/v1/transcript"
+BASE_URL = "https://transcriptapi.com/v1/transcript""
 
 
 def _extract_video_id(youtube_url: str) -> str:
