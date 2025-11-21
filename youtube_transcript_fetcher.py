@@ -3,7 +3,7 @@ import re
 import requests
 
 
-BASE_URL = "https://api.transcriptapi.com/api/v1/transcript/"
+BASE_URL = "https://transcriptapi.com/api/v1/transcript/"
 TRANSCRIPT_API_KEY = os.getenv("TRANSCRIPT_API_KEY")
 
 
