@@ -1,52 +1,109 @@
+import os
 import re
-from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+import requests
+
+
+BASE_URL = "https://api.transcriptapi.com/api/v1/transcript/"
+TRANSCRIPT_API_KEY = os.getenv("TRANSCRIPT_API_KEY")
+
+
+class TranscriptError(Exception):
+    pass
 
 
 def extract_video_id(url_or_id: str) -> str:
     """
-    Accepts a YouTube URL or bare ID and returns the video ID.
-    Handles watch URLs, youtu.be links, shorts, etc.
+    Accepts either a raw YouTube video ID or a full URL and
+    returns the video ID.
     """
-    url_or_id = url_or_id.strip()
+    # If it looks like a URL, pull the ID out
+    if "youtube.com" in url_or_id or "youtu.be" in url_or_id:
+        # Handles:
+        #  - https://www.youtube.com/watch?v=ID
+        #  - https://youtu.be/ID
+        #  - https://youtu.be/ID?si=...
+        match = re.search(r"(v=|youtu\.be/)([\w-]+)", url_or_id)
+        if match:
+            return match.group(2)
 
-    # Patterns for different YouTube URL styles
-    patterns = [
-        r"v=([\w-]+)",           # youtube.com/watch?v=ID
-        r"youtu\.be/([\w-]+)",   # youtu.be/ID
-        r"shorts/([\w-]+)",      # youtube.com/shorts/ID
-    ]
-
-    for p in patterns:
-        m = re.search(p, url_or_id)
-        if m:
-            return m.group(1)
-
-    # Fallback: assume it's already an ID
-    return url_or_id
+    # Otherwise assume it's already an ID
+    return url_or_id.strip()
 
 
 def fetch_youtube_transcript(url_or_id: str) -> str:
     """
-    Fetch English captions directly from YouTube and return them as plain text.
-    Uses youtube-transcript-api. Raises a useful error if not available.
+    Fetch transcript via transcriptAPI.com.
+
+    Requires:
+        TRANSCRIPT_API_KEY  (env var)
     """
+    if not TRANSCRIPT_API_KEY:
+        raise TranscriptError("Missing TRANSCRIPT_API_KEY environment variable")
+
     video_id = extract_video_id(url_or_id)
+    url = BASE_URL + video_id
+
+    headers = {
+        "X-Api-Key": TRANSCRIPT_API_KEY
+    }
 
     try:
-        transcript = YouTubeTranscriptApi.get_transcript(
-            video_id,
-            languages=["en", "en-US", "en-GB"]
-        )
-    except TranscriptsDisabled:
-        raise RuntimeError("This video has transcripts disabled.")
-    except NoTranscriptFound:
-        raise RuntimeError("No transcripts found for this video.")
+        resp = requests.get(url, headers=headers, timeout=30)
     except Exception as e:
-        raise RuntimeError(f"Transcript fetch failed: {e}")
+        raise TranscriptError(f"Request to transcriptAPI failed: {e}")
 
-    text = " ".join(entry.get("text", "") for entry in transcript).replace("\n", " ").strip()
+    if resp.status_code == 404:
+        raise TranscriptError("TranscriptAPI: transcript not found (404)")
 
-    if not text:
-        raise RuntimeError("Transcript was empty.")
+    if resp.status_code == 401 or resp.status_code == 403:
+        raise TranscriptError(
+            f"TranscriptAPI auth error ({resp.status_code}). "
+            "Check TRANSCRIPT_API_KEY."
+        )
 
-    return text
+    if resp.status_code >= 500:
+        raise TranscriptError(
+            f"TranscriptAPI server error ({resp.status_code}). Try again later."
+        )
+
+    # Some implementations sometimes return plain text like "Not Found"
+    # so we defensively handle non-JSON too.
+    try:
+        data = resp.json()
+    except ValueError:
+        txt = resp.text.strip()
+        if not txt:
+            raise TranscriptError("TranscriptAPI returned empty response")
+        # If it's just plain text, treat it as the transcript.
+        return txt
+
+    # Try to extract transcript in a few common shapes
+    transcript = None
+
+    if isinstance(data, dict):
+        if isinstance(data.get("transcript"), str):
+            transcript = data["transcript"]
+        elif isinstance(data.get("transcript"), list):
+            # e.g. [{"text": "...", "start": ..., "duration": ...}, ...]
+            parts = []
+            for entry in data["transcript"]:
+                if isinstance(entry, dict) and "text" in entry:
+                    parts.append(str(entry["text"]))
+            transcript = " ".join(parts).strip()
+        elif "text" in data and isinstance(data["text"], str):
+            transcript = data["text"]
+
+    elif isinstance(data, list):
+        # list of segments with "text"
+        parts = []
+        for entry in data:
+            if isinstance(entry, dict) and "text" in entry:
+                parts.append(str(entry["text"]))
+        transcript = " ".join(parts).strip()
+
+    if not transcript:
+        raise TranscriptError(
+            f"TranscriptAPI JSON did not contain a usable transcript: {data}"
+        )
+
+    return transcript
