@@ -1,73 +1,58 @@
 import os
-from typing import Optional
-
+import logging
 import requests
 
-TRANSCRIPT_API_KEY = os.getenv("TRANSCRIPT_API_KEY")
-
+logger = logging.getLogger(__name__)
 
 class TranscriptError(Exception):
-    """Raised when fetching a transcript fails."""
+    pass
 
 
-BASE_URL = "https://transcriptapi.com/api/v2/youtube/transcript"
-
-
-def _ensure_api_key() -> str:
-    if not TRANSCRIPT_API_KEY:
-        raise TranscriptError("TRANSCRIPT_API_KEY environment variable is not set.")
-    return TRANSCRIPT_API_KEY
-
-
-def fetch_transcript_via_transcriptapi(video_url: str) -> str:
+def get_transcript(video_url: str) -> str:
     """
-    Fetch transcript via TranscriptAPI.com (v2).
-
-    - Uses format='text' so we get Markdown with metadata in a 'content' field.
-    - Returns the Markdown string.
+    Fetch YouTube transcript using TranscriptAPI.com (v2).
+    Returns clean transcript text.
     """
-    api_key = _ensure_api_key()
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Accept": "application/json",
-    }
+    api_key = os.getenv("TRANSCRIPT_API_KEY")
+    if not api_key:
+        raise TranscriptError("Missing TRANSCRIPT_API_KEY environment variable.")
+
+    endpoint = "https://transcriptapi.com/api/v2/youtube/transcript"
+
     params = {
         "video_url": video_url,
-        "format": "text",
+        "format": "markdown",          # <<< safer than 'text'
+        "include_timestamp": "false",  # keep output clean for Claude
+        "send_metadata": "false"       # metadata not needed; avoids extra fields
+    }
+
+    headers = {
+        "Authorization": f"Bearer {api_key}"
     }
 
     try:
-        resp = requests.get(BASE_URL, headers=headers, params=params, timeout=30)
-    except requests.RequestException as e:
-        raise TranscriptError(f"TranscriptAPI request failed: {e}") from e
+        response = requests.get(endpoint, params=params, headers=headers, timeout=20)
+    except Exception as exc:
+        raise TranscriptError(f"TranscriptAPI request failed: {exc}")
 
-    if resp.status_code == 404:
-        # Known / nice error for Telegram logs
-        raise TranscriptError("TranscriptAPI: transcript not found (404)")
-
-    if resp.status_code == 401:
-        raise TranscriptError("TranscriptAPI: unauthorized (401) – check API key.")
-
-    if resp.status_code >= 400:
-        # Try to show something meaningful
-        try:
-            err_json = resp.json()
-        except Exception:
-            err_json = resp.text
+    if response.status_code != 200:
         raise TranscriptError(
-            f"TranscriptAPI error {resp.status_code}: {err_json}"
+            f"TranscriptAPI HTTP {response.status_code}: {response.text}"
         )
 
     try:
-        data = resp.json()
-    except ValueError as e:
-        raise TranscriptError(f"TranscriptAPI: invalid JSON response: {e}") from e
-# DEBUG LOG — TEMPORARY
-import logging
-logger = logging.getLogger(__name__)
-logger.error("TranscriptAPI raw response: %s", data)
+        data = response.json()
+    except Exception:
+        raise TranscriptError("TranscriptAPI returned non-JSON response.")
 
-content = data.get("content")
-if not content or not isinstance(content, str):
-    raise TranscriptError("TranscriptAPI: response missing 'content' field.")
+    # 🔥 TEMP DEBUG: print the entire response so we can inspect it
+    logger.error("TranscriptAPI RAW RESPONSE: %s", data)
+
+    # The transcript should live inside the "content" field:
+    content = data.get("content")
+
+    if not content or not isinstance(content, str):
+        raise TranscriptError("TranscriptAPI: response missing 'content' field.")
+
+    return content
