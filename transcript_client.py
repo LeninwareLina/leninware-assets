@@ -2,7 +2,7 @@ import os
 import requests
 
 
-BASE_URL = "https://api.transcriptapi.com/v1/transcript"
+BASE_URL = "https://api.transcriptapi.com/api/v1/transcript"
 
 
 def get_video_id(url: str) -> str:
@@ -42,17 +42,17 @@ def get_video_transcript(url: str) -> str:
     except Exception as e:
         raise ValueError(f"Transcript API request failed: {e}")
 
+    # Non-JSON means API returned an error page (e.g. Not Found)
+    try:
+        data = response.json()
+    except Exception:
+        raise ValueError(f"Transcript API returned non-JSON data: {response.text}")
+
     if response.status_code == 404:
         raise ValueError("Transcript unavailable for this video.")
 
     if response.status_code != 200:
         raise ValueError(f"Transcript API error: {response.text}")
-
-    # Response must be JSON
-    try:
-        data = response.json()
-    except Exception:
-        raise ValueError("Transcript API returned non-JSON response.")
 
     if "text" not in data:
         raise ValueError("Transcript API returned invalid structure (missing 'text').")
