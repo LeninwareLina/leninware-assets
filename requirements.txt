@@ -1,9 +1,4 @@
-Flask
-requests
-gunicorn
 python-telegram-bot==20.7
-openai
-anthropic
-google-api-python-client
-google-auth-oauthlib
-youtube-transcript-api
+anthropic>=0.34.0
+openai>=1.35.0
+youtube-transcript-api>=0.6.2
