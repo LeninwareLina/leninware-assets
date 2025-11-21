@@ -94,7 +94,6 @@ async def claude_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(f"Claude failed: {e}")
         return
 
-    # Send the structured Leninware outputs
     reply = (
         "TTS SCRIPT:\n"
         f"{outputs['tts']}\n\n"
@@ -105,7 +104,6 @@ async def claude_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
     await update.message.reply_text(reply)
 
-    # Optional: auto-generate TTS from the Leninware script as well
     try:
         audio_bytes = generate_tts(outputs["tts"])
         bio = io.BytesIO(audio_bytes)
@@ -113,7 +111,7 @@ async def claude_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_voice(voice=InputFile(bio))
     except Exception as e:
         logger.exception("Post-Claude TTS failed")
-        # Non-fatal; we've already sent the text.
+        # Not fatal.
 
 
 def main() -> None:
