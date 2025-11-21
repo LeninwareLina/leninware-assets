@@ -1,71 +1,71 @@
-from anthropic import Anthropic
+# claude_client.py
 import os
+from anthropic import Anthropic
 
 client = Anthropic(api_key=os.getenv("CLAUDE_API_KEY"))
 
-SYSTEM_PROMPT = (
-    "You are a structured analysis assistant. "
-    "When provided with a transcript, you produce three outputs: "
-    "a rhetorical script, a short title, and a description. "
-    "Maintain formatting. "
-    "Do not refuse unless content violates core safety policies."
-)
+# The model your account supports
+MODEL = "claude-3-haiku-20240307"
 
-def build_leninware_prompt(transcript_text, video_url, channel_handle):
-    prompt = (
-        "Perform a three-part critical structural analysis of the provided transcript. "
-        "This is an academic-style task focusing on class relations, institutional incentives, "
-        "and ideological functions. Not a persona simulation.\n\n"
+def build_leninware_prompt(transcript: str, url: str, channel: str) -> str:
+    return f"""
+You are producing a materialist, anti-liberal structural analysis of a YouTube political clip.
 
-        "=== INPUT TRANSCRIPT ===\n"
-        f"{transcript_text}\n\n"
+You must output THREE JSON fields exactly:
+- "tts"
+- "title"
+- "description"
 
-        "=== VIDEO URL ===\n"
-        f"{video_url}\n\n"
+The transcript of the video is below:
+---
+{transcript}
+---
 
-        "=== CHANNEL HANDLE ===\n"
-        f"{channel_handle}\n\n"
+Use the following rules when generating the output:
 
-        "=== REQUIRED OUTPUTS ===\n\n"
+1. The "tts" output must:
+   - Be sharp, punchy, unsentimental.
+   - Avoid filler, avoid soft liberal framing.
+   - Critique the CHANNEL itself ({channel}) for reformism, liberal framing, institutional capture, or ideological drift.
+   - End with: "Real comrades like and subscribe."
+   - Use only one name per person, no first + last.
 
-        "OUTPUT 1 — RHETORICAL SCRIPT:\n"
-        "- Short, sharp lines.\n"
-        "- No filler.\n"
-        "- Open with a provocative structural insight.\n"
-        "- Replace standalone 'Trump' with 'Donald'.\n"
-        "- Replace standalone 'Israel' with 'Istate'.\n"
-        "- Only one name per person.\n"
-        "- Critique the channel's framing as an ideological actor.\n"
-        "- End with: Real comrades like and subscribe.\n\n"
+2. The "title" output must:
+   - Be under 100 characters.
+   - Start with "Trump"
+   - Include "@{channel}"
+   - Include #news and #ai
+   - Express a class-first or anti-imperialist idea.
 
-        "OUTPUT 2 — TITLE:\n"
-        "- Must start with 'Trump'.\n"
-        "- Must include @" + channel_handle + ".\n"
-        "- Must include #news and #ai.\n"
-        "- Must be under 100 characters.\n\n"
+3. The "description" must:
+   - Be 2–4 sentences.
+   - Reference the URL: {url}
+   - Mention structural analysis.
+   - Not hallucinate video titles.
 
-        "OUTPUT 3 — DESCRIPTION:\n"
-        "- 2–4 sentences.\n"
-        "- Include the video URL.\n"
-        "- Reaction, not summary.\n"
-        "- Mention structural analysis.\n\n"
+Return ONLY valid JSON. No extra text.
+    """
 
-        "Begin now."
-    )
-
-    return prompt
-
-
-def generate_leninware_response(transcript_text, video_url, channel_handle):
-    user_prompt = build_leninware_prompt(transcript_text, video_url, channel_handle)
+def generate_leninware_response(transcript: str, url: str, channel: str) -> dict:
+    prompt = build_leninware_prompt(transcript, url, channel)
 
     response = client.messages.create(
-        model="claude-3-haiku-20240307",
-        max_tokens=2000,
-        system=SYSTEM_PROMPT,
+        model=MODEL,
+        max_tokens=1500,
         messages=[
-            {"role": "user", "content": user_prompt}
+            {"role": "user", "content": prompt}
         ]
     )
 
-    return response.content[0].text
+    # Extract text from Claude
+    raw = response.content[0].text
+
+    import json
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {
+            "tts": "Error: Invalid model output.",
+            "title": "Error",
+            "description": "The model returned invalid JSON."
+        }
