@@ -9,10 +9,11 @@ from telegram.ext import (
     ContextTypes,
 )
 
-from youtube_transcript_fetcher import fetch_youtube_transcript
+from youtube_transcript_fetcher import fetch_youtube_transcript, TranscriptError
 from youtube_metadata import fetch_youtube_metadata
 from claude_client import generate_leninware_from_transcript
 from tts_generator import synthesize_speech
+
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -20,15 +21,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_API_KEY")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_API_TOKEN")
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = (
         "Leninware online.\n\n"
-        "/ping – check status\n"
-        "/tts <text> – generate speech\n"
-        "/Claude <YouTube URL> – Leninware analysis of a video"
+        "/ping – check if I'm alive\n"
+        "/tts <text> – generate TTS using OpenAI\n"
+        "/leninware <YouTube URL or ID> – pull transcript via TranscriptAPI and react\n"
+        "/Claude <YouTube URL or ID> – alias for /leninware"
     )
     await update.message.reply_text(text)
 
@@ -40,7 +42,7 @@ async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def tts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = " ".join(context.args).strip()
     if not text:
-        await update.message.reply_text("Usage: /tts <text>")
+        await update.message.reply_text("Usage: /tts some text to speak")
         return
 
     try:
@@ -55,47 +57,44 @@ async def tts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await update.message.reply_voice(voice=InputFile(bio))
 
 
-async def claude_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def leninware_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
-        await update.message.reply_text("Usage: /Claude <YouTube URL or ID>")
+        await update.message.reply_text("Usage: /leninware <YouTube URL or video ID>")
         return
 
     url_or_id = context.args[0].strip()
 
-    await update.message.reply_text("Fetching YouTube metadata + captions…")
+    await update.message.reply_text("Fetching transcript via TranscriptAPI…")
 
     try:
         transcript_text = fetch_youtube_transcript(url_or_id)
-        metadata = fetch_youtube_metadata(url_or_id)
+    except TranscriptError as e:
+        logger.exception("Transcript fetch failed (TranscriptError)")
+        await update.message.reply_text(f"Could not get transcript: {e}")
+        return
     except Exception as e:
-        logger.exception("YouTube data failure")
-        await update.message.reply_text(f"Could not get data from YouTube:\n{e}")
+        logger.exception("Transcript fetch failed (generic)")
+        await update.message.reply_text(f"Could not get transcript: {e}")
         return
 
-    video_title = metadata.get("video_title", "")
-    channel_name = metadata.get("channel_name", "")
-    video_url = metadata.get("video_url", "")
+    await update.message.reply_text("Getting video metadata…")
+    metadata = fetch_youtube_metadata(url_or_id)
 
-    await update.message.reply_text("Processing with Claude (Leninware mode)…")
+    await update.message.reply_text("Asking Claude in Leninware mode…")
 
     try:
-        outputs = generate_leninware_from_transcript(
-            transcript_text,
-            video_title,
-            channel_name,
-            video_url,
-        )
+        outputs = generate_leninware_from_transcript(transcript_text, metadata)
     except Exception as e:
-        logger.exception("Claude failure")
+        logger.exception("Claude processing failed")
         await update.message.reply_text(f"Claude failed: {e}")
         return
 
     reply = (
-        "TTS SCRIPT:\n"
+        "OUTPUT 1 — TTS SCRIPT\n"
         f"{outputs['tts']}\n\n"
-        "TITLE:\n"
+        "OUTPUT 2 — TITLE\n"
         f"{outputs['title']}\n\n"
-        "DESCRIPTION:\n"
+        "OUTPUT 3 — DESCRIPTION\n"
         f"{outputs['description']}"
     )
 
@@ -104,7 +103,7 @@ async def claude_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 def main() -> None:
     if not TELEGRAM_TOKEN:
-        raise RuntimeError("Missing TELEGRAM_API_KEY environment variable")
+        raise RuntimeError("Missing TELEGRAM_API_TOKEN environment variable")
 
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
@@ -112,7 +111,8 @@ def main() -> None:
     app.add_handler(CommandHandler("help", start))
     app.add_handler(CommandHandler("ping", ping))
     app.add_handler(CommandHandler("tts", tts_command))
-    app.add_handler(CommandHandler("Claude", claude_command))
+    # /leninware is the main command; /Claude and /claude are aliases
+    app.add_handler(CommandHandler(["leninware", "Claude", "claude"], leninware_command))
 
     logger.info("Starting Leninware bot…")
     app.run_polling()
