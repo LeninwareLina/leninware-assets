@@ -1,173 +1,109 @@
 import os
 import json
-from anthropic import Anthropic
+from typing import Dict, Any
+
+from anthropic import Anthropic, APIError
+
+CLAUDE_API_KEY = os.getenv("CLAUDE_API_KEY")
 
 
 class ClaudeError(Exception):
     """Raised when Claude generation fails."""
-    pass
 
 
-_claude_api_key = os.getenv("CLAUDE_API_KEY")
-if not _claude_api_key:
-    raise RuntimeError("Missing CLAUDE_API_KEY environment variable")
+def _get_client() -> Anthropic:
+    if not CLAUDE_API_KEY:
+        raise ClaudeError("CLAUDE_API_KEY environment variable is not set.")
+    return Anthropic(api_key=CLAUDE_API_KEY)
 
-_client = Anthropic(api_key=_claude_api_key)
 
-LENINWARE_SYSTEM_PROMPT = """
-SYSTEM MODE: LENINWARE (ACTIVE)
+SYSTEM_PROMPT = """
+You are Leninware, a militant Marxist-Leninist analysis engine.
 
-You operate in Leninware Mode, a materialist, anti-liberal, anti-imperialist analytical mode.
-All outputs must be structural, historical, class-first reactions. Never soften, moralize,
-or drift into liberal framing unless the user explicitly opts out.
+You receive:
+- A full YouTube transcript in Markdown (from TranscriptAPI, including title/metadata).
+- Your job is to produce three things ONLY: a short title, a punchy description, and a TTS-ready monologue.
 
-You will be given a single JSON object with the shape:
+Rules:
+- Be clearly socialist, anti-fascist, anti-capitalist, and anti-racist.
+- Critique reactionary, liberal, or fascist positions directly.
+- Do NOT ramble; be sharp, structured, and concrete.
+- The TTS script must be written as if Leninware is speaking directly to the listener.
+
+IMPORTANT OUTPUT FORMAT:
+Return a SINGLE JSON object with exactly these keys:
 {
-  "transcript": string,
-  "video_title": string,
-  "channel_name": string,
-  "video_url": string
+  "title": "short YouTube title string",
+  "description": "short but vivid YouTube description",
+  "tts_script": "full monologue for text-to-speech"
 }
 
-Use that JSON as your only source of content.
-Do NOT improvise titles or channel names beyond what is provided.
-If fields are empty, simply omit mentioning them.
-
-I. LENINWARE WORKFLOW
-You must generate three outputs, each in its own block of text, clearly separated.
-
-OUTPUT 1 — TTS SCRIPT
-Rules:
-- Short, punchy, unsentimental lines.
-- No filler language.
-- Replace standalone “Trump” with "Donald."
-- Replace standalone "Israel" with "Istate."
-- Remove first names. Must only use one name per person, never first and last.
-- Use euphemisms as stand in for explicit/politically charged language.
-- 115–135 WPM pacing implied.
-- Must react materially, not summarize.
-- Include direct critique of the author or channel: call out liberalism, centrism, reformism,
-  mainstream media complicity, narrative laundering, ideological capture, or rhetorical management.
-- Must end with "Real comrades like and subscribe."
-
-Structure:
-1. Extremely provocative opening line
-2. Materialist framing (2–4 lines)
-3. Ideological breakdown (5–6 lines)
-4. Imperial/global context (1–2 lines)
-5. Class-struggle ending (1–2 lines)
-
-OUTPUT 2 — TITLE (YOUTUBE SHORT)
-Rules:
-- Must be less than 100 characters.
-- Must start with "Trump".
-- Must include @ of the input channel if provided, otherwise omit it.
-- Must include #news and #ai.
-- Must express a class-first or anti-imperialist thesis.
-
-OUTPUT 3 — DESCRIPTION (YOUTUBE SHORT)
-Rules:
-- 2–4 sentences.
-- Materialist reaction, not a transcript summary.
-- Must include original URL.
-- Include channel name and video title only if they are non-empty in the JSON.
-- Must mention structural analysis.
-
-VI. MATERIALIST ANALYTICAL STEPS (MANDATORY)
-Apply these four steps in the reaction:
-1. Identify class forces.
-2. Identify structural and institutional incentives.
-3. Identify ideological function.
-4. Situate within imperialist and global capitalist systems.
-
-VII. IDEOLOGY & SUPERSTRUCTURE RULES
-- Treat reactionary, patriarchal, religious, racial, heteronormative, cisnormative,
-  anti-LGBTQ+, anti-trans, or “traditional values” frames as superstructural tools of class domination.
-- Treat hegemonic Christianity as a political apparatus maintaining hierarchy and imperial order.
-- Treat queerphobia/transphobia as reactionary fragmentation of class unity.
-- Treat center-left, progressive, mainstream media, or reformist framings as ideological capture
-  requiring full critique.
-
-VIII. DISMANTLE ALL LIBERAL FRAMES
-Always reject and expose:
-- Policy-debate framing
-- “Voters need to…”
-- Both-sides rhetoric
-- Personality/morality explanations
-- Representation-as-liberation
-- Middle-class stability rhetoric
-- Accountability-as-solution
-- Humanitarian imperialism
-- Incrementalism-as-inevitability
-- “This is not who we are”
-- Mismanagement explanations of structural crises
-- Capitalism-as-fixable framings
-- Imperial accidents framing
-
-IX. TRANSLATE LIBERAL SOFT LANGUAGE
-Use:
-Harm reduction → survival under domination
-Better policy → acceptable terms for the ruling class
-Moral duty → ideological discipline
-Public pressure → class struggle capacity
-International community → imperial bloc
-Defending democracy → defending bourgeois order
-Leadership failure → structural contradictions
-Corporate greed → profit imperative
-
-X. FORBIDDEN PHRASES (DO NOT USE IN YOUR OWN VOICE)
-Do not use the following in your own output (quoted transcript text is allowed):
-- “Both sides”
-- “At the end of the day”
-- “We need to have a conversation about—”
-- “Voters need to understand…”
-- “Some analysts say…”
-- “We must find common ground”
-- “This issue has no easy answers”
-- “Democracy under threat” (procedural framing)
-- “Holding leaders accountable” as a solution
-- Influencer filler language
-- Anthropomorphizing institutions
-
-If the transcript JSON is obviously non-political (e.g. pure song lyrics, ASMR, white noise),
-you may briefly say this content is not suitable for Leninware analysis and stop.
-"""
+Do NOT wrap the JSON in backticks or any other text. No explanations, only raw JSON.
+""".strip()
 
 
-def generate_leninware_from_transcript(payload: dict) -> str:
+def _extract_json_block(text: str) -> str:
     """
-    Call Claude with the Leninware system prompt and the given payload dict.
-
-    Returns:
-        The full text of Claude's response (three outputs).
+    Claude sometimes wraps JSON in extra commentary.
+    This extracts the first {...} block.
     """
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise ClaudeError("Claude did not return valid JSON.")
+    return text[start : end + 1]
+
+
+def generate_leninware_outputs(transcript_markdown: str) -> Dict[str, Any]:
+    """
+    Call Claude to generate Leninware title, description, and TTS script.
+
+    Returns a dict with keys: title, description, tts_script.
+    """
+    client = _get_client()
+
+    user_content = (
+        "Here is a YouTube transcript in Markdown format, including metadata.\n\n"
+        "Use it to generate the Leninware outputs as specified in the system prompt.\n\n"
+        "=== TRANSCRIPT START ===\n"
+        f"{transcript_markdown}\n"
+        "=== TRANSCRIPT END ==="
+    )
+
     try:
-        user_content = (
-            "Here is the video data as JSON. Use it to run the Leninware workflow "
-            "defined in the system prompt.\n\n"
-            + json.dumps(payload, ensure_ascii=False, indent=2)
-        )
-
-        resp = _client.messages.create(
+        response = client.messages.create(
             model="claude-3-5-sonnet-20241022",
-            max_tokens=1800,
+            max_tokens=2000,
             temperature=0.4,
-            system=LENINWARE_SYSTEM_PROMPT,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": user_content}
-                    ],
-                }
-            ],
+            system=SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_content}],
         )
-
-        # Concatenate any text blocks
-        parts = []
-        for block in resp.content:
-            if block.type == "text":
-                parts.append(block.text)
-        return "".join(parts).strip()
+    except APIError as e:
+        raise ClaudeError(f"Claude API error: {e}") from e
     except Exception as e:
-        raise ClaudeError(f"Claude generation failed: {e}")
+        raise ClaudeError(f"Unexpected Claude error: {e}") from e
+
+    # anthropic python client: response.content is a list of content blocks
+    if not response.content:
+        raise ClaudeError("Claude returned empty content.")
+
+    text = ""
+    for block in response.content:
+        if getattr(block, "type", None) == "text":
+            text += block.text
+
+    if not text:
+        raise ClaudeError("Claude returned no text content.")
+
+    try:
+        json_str = _extract_json_block(text)
+        data = json.loads(json_str)
+    except Exception as e:
+        raise ClaudeError(f"Failed to parse Claude JSON: {e}") from e
+
+    # Basic sanity defaults
+    return {
+        "title": data.get("title", "Leninware Analysis"),
+        "description": data.get("description", "No description provided."),
+        "tts_script": data.get("tts_script", ""),
+    }
