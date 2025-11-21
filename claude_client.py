@@ -126,14 +126,19 @@ Otherwise, Leninware Mode always remains active.
 """
 
 
-def generate_leninware_outputs(transcript: str, video_title: str, channel_name: str, video_url: str) -> dict:
+def generate_leninware_from_transcript(
+    transcript: str,
+    video_title: str,
+    channel_name: str,
+    video_url: str,
+) -> dict:
     """
     Send transcript + metadata to Claude and get:
       - tts
       - title
       - description
+    Returns a dict with keys: tts, title, description, raw.
     """
-    # Truncate if absurdly long
     max_chars = 18000
     if len(transcript) > max_chars:
         transcript = transcript[:max_chars]
@@ -175,7 +180,6 @@ def generate_leninware_outputs(transcript: str, video_title: str, channel_name: 
 
     full = "\n".join(parts).strip()
 
-    # Simple parsing
     upper = full.upper()
     tts_idx = upper.find("TTS:")
     title_idx = upper.find("TITLE:")
