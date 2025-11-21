@@ -1,38 +1,25 @@
 import os
-import logging
 from openai import OpenAI
 
-logger = logging.getLogger(__name__)
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+TTS_MODEL = os.getenv("TTS_MODEL", "gpt-4o-mini-tts")  # or "tts-1"
+TTS_VOICE = os.getenv("TTS_VOICE", "alloy")  # you can change this later
 
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
-    raise RuntimeError("OPENAI_API_KEY env var is missing")
+    raise RuntimeError("Missing OPENAI_API_KEY environment variable")
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+_client = OpenAI(api_key=OPENAI_API_KEY)
 
 
-def generate_tts_audio(tts_script: str, output_path="tts_output.mp3") -> str:
+def synthesize_speech(text: str) -> bytes:
     """
-    Generate TTS audio using OpenAI's model.
-    Uses:
-      - model: gpt-4o-mini-tts
-      - voice: alloy (female-ish)
-      - speed: 1.2x
+    Generate speech audio (mp3) from text using OpenAI TTS.
+    Returns raw bytes.
     """
-
-    logger.info("Generating TTS audio at 1.2x speed...")
-
-    response = client.audio.speech.create(
-        model="gpt-4o-mini-tts",
-        voice="alloy",
-        input=tts_script,
-        speed=1.2
+    resp = _client.audio.speech.create(
+        model=TTS_MODEL,
+        voice=TTS_VOICE,
+        input=text,
     )
-
-    audio_bytes = response.read()
-
-    with open(output_path, "wb") as f:
-        f.write(audio_bytes)
-
-    logger.info(f"TTS audio saved to {output_path}")
-    return output_path
+    # Streaming API: read all bytes
+    return resp.read()
