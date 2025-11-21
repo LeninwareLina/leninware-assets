@@ -1,18 +1,17 @@
-import io
 import logging
 import os
+import tempfile
 
-from telegram import Update, InputFile
+from telegram import Update
 from telegram.ext import (
-    ApplicationBuilder,
+    Updater,
     CommandHandler,
-    ContextTypes,
+    CallbackContext,
 )
 
-from youtube_transcript_fetcher import fetch_transcript_via_service, TranscriptError
-from youtube_metadata import fetch_youtube_metadata
-from claude_client import generate_leninware_from_payload, ClaudeError
 from tts_generator import generate_tts, TTSError
+from youtube_transcript_fetcher import fetch_transcript_via_service, TranscriptError
+from claude_client import generate_leninware_from_transcript, ClaudeError
 
 
 logging.basicConfig(
@@ -21,113 +20,114 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_API_KEY")
+
+def _get_required_env(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        raise RuntimeError(f"Missing {name} environment variable")
+    return value
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    text = (
-        "Leninware online.\n\n"
-        "/ping – check if I'm alive\n"
-        "/tts <text> – generate TTS using OpenAI\n"
-        "/Claude <YouTube URL> – pull captions and run Leninware analysis"
-    )
-    await update.message.reply_text(text)
+def start(update: Update, context: CallbackContext) -> None:
+    update.message.reply_text("Leninware online ✊")
 
 
-async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text("Leninware online ✊")
+def ping(update: Update, context: CallbackContext) -> None:
+    update.message.reply_text("Leninware online ✊")
 
 
-async def tts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+def tts_command(update: Update, context: CallbackContext) -> None:
+    if not context.args:
+        update.message.reply_text("Usage: /tts some text to speak")
+        return
+
     text = " ".join(context.args).strip()
     if not text:
-        await update.message.reply_text("Usage: /tts some text to speak")
+        update.message.reply_text("Usage: /tts some text to speak")
         return
 
     try:
-        audio_bytes = generate_tts(text)
+        audio_path = generate_tts(text)
     except TTSError as e:
         logger.exception("TTS failed")
-        await update.message.reply_text(f"TTS failed: {e}")
+        update.message.reply_text(f"TTS failed: {e}")
         return
-    except Exception as e:
-        logger.exception("TTS failed (unexpected)")
-        await update.message.reply_text(f"TTS failed: {e}")
-        return
-
-    bio = io.BytesIO(audio_bytes)
-    bio.name = "speech.mp3"
-    await update.message.reply_voice(voice=InputFile(bio))
-
-
-async def claude_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not context.args:
-        await update.message.reply_text("Usage: /Claude <YouTube URL>")
-        return
-
-    video_url = context.args[0]
-
-    await update.message.reply_text("Fetching transcript via TranscriptAPI...")
 
     try:
-        transcript_text = fetch_transcript_via_service(video_url)
-    except TranscriptError as e:
-        logger.warning("Transcript fetch failed: %s", e)
-        await update.message.reply_text(f"Could not get transcript: {e}")
+        with open(audio_path, "rb") as f:
+            # Use send_audio so mp3 is fine
+            update.message.reply_audio(audio=f)
+    finally:
+        try:
+            os.remove(audio_path)
+        except OSError:
+            pass
+
+
+def _send_long_message(update: Update, text: str) -> None:
+    """
+    Telegram has a ~4096 char limit per message.
+    Split into chunks if needed.
+    """
+    max_len = 4000
+    while text:
+        chunk = text[:max_len]
+        update.message.reply_text(chunk)
+        text = text[max_len:]
+
+
+def claude_command(update: Update, context: CallbackContext) -> None:
+    if not context.args:
+        update.message.reply_text("Usage: /Claude <YouTube URL or video ID>")
         return
 
-    meta = fetch_youtube_metadata(video_url)
+    url_or_id = context.args[0].strip()
+    update.message.reply_text("Fetching transcript via TranscriptAPI...")
+
+    try:
+        transcript, title, channel, canonical_url = fetch_transcript_via_service(url_or_id)
+    except TranscriptError as e:
+        # Match the phrasing your Claude prompt expects when no transcript exists
+        msg = str(e)
+        logger.warning("Transcript error: %s", msg)
+        update.message.reply_text(f"Could not get transcript: {msg}")
+        return
 
     payload = {
-        "transcript": transcript_text,
-        "video_title": meta.title,
-        "channel_name": meta.channel_name,
-        "video_url": video_url,
+        "transcript": transcript,
+        "video_title": title,
+        "channel_name": channel,
+        "video_url": canonical_url,
     }
 
-    await update.message.reply_text("Asking Claude (Leninware mode)…")
-
     try:
-        outputs = generate_leninware_from_payload(payload)
+        analysis = generate_leninware_from_transcript(payload)
     except ClaudeError as e:
-        logger.exception("Claude processing failed")
-        await update.message.reply_text(f"Claude failed: {e}")
+        logger.exception("Claude generation failed")
+        update.message.reply_text(f"Claude generation failed: {e}")
         return
 
-    reply = (
-        "TTS SCRIPT:\n"
-        f"{outputs['tts']}\n\n"
-        "TITLE:\n"
-        f"{outputs['title']}\n\n"
-        "DESCRIPTION:\n"
-        f"{outputs['description']}"
-    )
-    await update.message.reply_text(reply)
+    if not analysis.strip():
+        update.message.reply_text("Claude returned an empty response.")
+        return
 
-    try:
-        audio_bytes = generate_tts(outputs["tts"])
-        bio = io.BytesIO(audio_bytes)
-        bio.name = "leninware_commentary.mp3"
-        await update.message.reply_voice(voice=InputFile(bio))
-    except Exception as e:
-        logger.exception("Post-Claude TTS failed")
-        # Not fatal.
+    _send_long_message(update, analysis)
 
 
 def main() -> None:
-    if not TELEGRAM_TOKEN:
-        raise RuntimeError("Missing TELEGRAM_API_KEY environment variable")
+    token = _get_required_env("TELEGRAM_API_KEY")
 
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    updater = Updater(token, use_context=True)
+    dp = updater.dispatcher
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", start))
-    app.add_handler(CommandHandler("ping", ping))
-    app.add_handler(CommandHandler("tts", tts_command))
-    app.add_handler(CommandHandler("Claude", claude_command))
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CommandHandler("ping", ping))
+    dp.add_handler(CommandHandler("tts", tts_command))
+    dp.add_handler(CommandHandler("Claude", claude_command))
 
-    logger.info("Starting Leninware bot…")
-    app.run_polling()
+    logger.info("Leninware bot starting...")
+    updater.start_polling()
+    updater.idle()
 
 
 if __name__ == "__main__":
