@@ -1,119 +1,107 @@
 import os
+import re
 import requests
-from urllib.parse import urlparse, parse_qs
 
 
 class TranscriptError(Exception):
-    """Custom error for transcript retrieval problems."""
+    """Raised when fetching a transcript fails."""
     pass
 
 
-# TranscriptAPI.com endpoint
-TRANSCRIPT_API_BASE = "https://transcriptapi.com/api/v1/transcript"
-TRANSCRIPT_API_KEY = os.getenv("TRANSCRIPT_API_KEY")
-
-
-def extract_video_id(url_or_id: str) -> str:
+def _extract_video_id(url_or_id: str) -> str:
     """
-    Takes a YouTube URL or a raw video ID and returns the 11-character ID.
-    This properly strips Telegram's ?si=… junk and extra parameters.
+    Accept either a full YouTube URL or a raw video ID and return the ID.
     """
-    url_or_id = (url_or_id or "").strip()
+    url_or_id = url_or_id.strip()
 
-    # Looks like URL?
-    if url_or_id.startswith("http://") or url_or_id.startswith("https://"):
-        parsed = urlparse(url_or_id)
-        hostname = (parsed.hostname or "").lower()
+    # If it's already 11-char ID, just use it
+    if re.fullmatch(r"[A-Za-z0-9_-]{11}", url_or_id):
+        return url_or_id
 
-        # Standard YouTube link: youtube.com/watch?v=ID
-        if "youtube.com" in hostname:
-            query = parse_qs(parsed.query)
-            if "v" in query and query["v"]:
-                return query["v"][0]
+    # Common YouTube URL patterns
+    patterns = [
+        r"v=([A-Za-z0-9_-]{11})",
+        r"youtu\.be/([A-Za-z0-9_-]{11})",
+    ]
 
-        # Short link: youtu.be/ID
-        if "youtu.be" in hostname:
-            vid = parsed.path.lstrip("/")
-            if vid:
-                return vid
+    for pat in patterns:
+        m = re.search(pat, url_or_id)
+        if m:
+            return m.group(1)
 
-    # If not a URL, assume it's already a video ID
-    return url_or_id
+    raise TranscriptError(f"Could not extract video ID from: {url_or_id}")
 
 
-def fetch_youtube_transcript(url_or_id: str):
+def fetch_transcript_via_service(url_or_id: str):
     """
-    Fetches transcript + title + channel from TranscriptAPI.com.
+    Fetch transcript + metadata from TranscriptAPI.com.
 
     Returns:
-        transcript_text (str),
-        video_title (str),
-        channel_name (str)
-
-    Raises:
-        TranscriptError for any failure.
+        (transcript_text, video_title, channel_name, canonical_video_url)
     """
-    if not TRANSCRIPT_API_KEY:
-        raise TranscriptError("TRANSCRIPT_API_KEY environment variable is not set")
+    api_key = os.getenv("TRANSCRIPT_API_KEY")
+    if not api_key:
+        raise TranscriptError("Missing TRANSCRIPT_API_KEY environment variable")
 
-    video_id = extract_video_id(url_or_id)
-    if not video_id:
-        raise TranscriptError("Could not extract a YouTube video ID from input")
+    video_id = _extract_video_id(url_or_id)
 
+    base_url = "https://transcriptapi.com/api/v1/transcript"
     headers = {
-        "Authorization": f"Bearer {TRANSCRIPT_API_KEY}"
+        "Authorization": f"Bearer {api_key}",
     }
 
+    # Per docs: they accept video_url=VIDEO_ID (11-char ID)
     params = {
         "video_url": video_id,
-        "format": "text",
-        "include_metadata": "true"
+        # no explicit format so we get full JSON (segments + metadata)
     }
 
     try:
-        response = requests.get(
-            TRANSCRIPT_API_BASE,
-            headers=headers,
-            params=params,
-            timeout=30
-        )
+        resp = requests.get(base_url, headers=headers, params=params, timeout=30)
     except requests.RequestException as e:
-        raise TranscriptError(f"TranscriptAPI request failed: {e}")
+        raise TranscriptError(f"Request to TranscriptAPI failed: {e}")
 
-    # HTTP error handling
-    if response.status_code == 404:
-        raise TranscriptError("TranscriptAPI: transcript not found (404)")
-    if response.status_code == 401:
-        raise TranscriptError("TranscriptAPI: unauthorized (check API key)")
-    if not response.ok:
-        snippet = response.text[:200].replace("\n", " ")
+    if resp.status_code == 404:
+        # Align with Claude prompt expectations
+        raise TranscriptError("Transcript unavailable. No Leninware outputs can be produced.")
+
+    if not resp.ok:
         raise TranscriptError(
-            f"TranscriptAPI HTTP {response.status_code}: {snippet}"
+            f"TranscriptAPI error {resp.status_code}: {resp.text[:300]}"
         )
 
-    # Parse JSON
     try:
-        data = response.json()
-    except ValueError:
-        raise TranscriptError("TranscriptAPI returned invalid JSON")
+        data = resp.json()
+    except ValueError as e:
+        raise TranscriptError(f"Failed to parse TranscriptAPI response as JSON: {e}")
 
-    transcript_text = data.get("transcript") or ""
-    metadata = data.get("metadata") or {}
+    transcript_field = data.get("transcript")
+    if not transcript_field:
+        raise TranscriptError("TranscriptAPI response missing 'transcript' field")
 
-    video_title = (
-        metadata.get("title")
-        or metadata.get("video_title")
-        or ""
-    )
+    # They sometimes return list of segments, sometimes plain string.
+    if isinstance(transcript_field, list):
+        transcript_text = " ".join(seg.get("text", "") for seg in transcript_field)
+    elif isinstance(transcript_field, str):
+        transcript_text = transcript_field
+    else:
+        raise TranscriptError("Unexpected 'transcript' format in response")
 
-    channel_name = (
-        metadata.get("channel_name")
-        or metadata.get("channelTitle")
-        or metadata.get("author")
-        or ""
-    )
-
+    transcript_text = transcript_text.strip()
     if not transcript_text:
-        raise TranscriptError("TranscriptAPI returned an empty transcript")
+        raise TranscriptError("Transcript text is empty")
 
-    return transcript_text, video_title, channel_name
+    metadata = data.get("metadata", {}) or {}
+    video_title = metadata.get("title", "").strip() or ""
+    # Channel might be stored under different names; try a few
+    channel_name = (
+        metadata.get("channel")
+        or metadata.get("author")
+        or metadata.get("uploader")
+        or ""
+    )
+    channel_name = str(channel_name).strip()
+
+    canonical_url = f"https://www.youtube.com/watch?v={video_id}"
+
+    return transcript_text, video_title, channel_name, canonical_url
