@@ -1,107 +1,134 @@
+# youtube_transcript_fetcher.py
+
 import os
-import re
+from typing import Optional
+from urllib.parse import urlparse, parse_qs
+
 import requests
 
 
+TRANSCRIPT_API_BASE_URL = "https://transcriptapi.com/api/v2"
+
+
 class TranscriptError(Exception):
-    """Raised when fetching a transcript fails."""
+    """Raised when we can't get a transcript from any source."""
     pass
 
 
-def _extract_video_id(url_or_id: str) -> str:
-    """
-    Accept either a full YouTube URL or a raw video ID and return the ID.
-    """
-    url_or_id = url_or_id.strip()
-
-    # If it's already 11-char ID, just use it
-    if re.fullmatch(r"[A-Za-z0-9_-]{11}", url_or_id):
-        return url_or_id
-
-    # Common YouTube URL patterns
-    patterns = [
-        r"v=([A-Za-z0-9_-]{11})",
-        r"youtu\.be/([A-Za-z0-9_-]{11})",
-    ]
-
-    for pat in patterns:
-        m = re.search(pat, url_or_id)
-        if m:
-            return m.group(1)
-
-    raise TranscriptError(f"Could not extract video ID from: {url_or_id}")
-
-
-def fetch_transcript_via_service(url_or_id: str):
-    """
-    Fetch transcript + metadata from TranscriptAPI.com.
-
-    Returns:
-        (transcript_text, video_title, channel_name, canonical_video_url)
-    """
+def _get_env_api_key() -> str:
     api_key = os.getenv("TRANSCRIPT_API_KEY")
     if not api_key:
-        raise TranscriptError("Missing TRANSCRIPT_API_KEY environment variable")
+        raise TranscriptError(
+            "TRANSCRIPT_API_KEY environment variable is not set. "
+            "Please add it in Railway."
+        )
+    return api_key
 
-    video_id = _extract_video_id(url_or_id)
 
-    base_url = "https://transcriptapi.com/api/v1/transcript"
-    headers = {
-        "Authorization": f"Bearer {api_key}",
+def _normalise_youtube_url(url: str) -> str:
+    """
+    TranscriptAPI accepts either:
+      - full YouTube URL (what your personal Claude sends), or
+      - just the 11-char video ID.
+
+    To stay as close as possible to your working setup, we pass
+    the original URL through untouched, but we still sanity-check it.
+    """
+    url = url.strip()
+
+    # If it's already an 11-character ID, just return it.
+    if len(url) == 11 and " " not in url and "/" not in url:
+        return url
+
+    parsed = urlparse(url)
+
+    # Short links like https://youtu.be/VIDEO_ID
+    if parsed.netloc in {"youtu.be"} and parsed.path:
+        vid = parsed.path.lstrip("/")
+        if len(vid) == 11:
+            return url  # full URL is fine
+
+    # Standard links like https://www.youtube.com/watch?v=VIDEO_ID
+    if "youtube.com" in parsed.netloc:
+        qs = parse_qs(parsed.query)
+        vid_list = qs.get("v")
+        if vid_list and len(vid_list[0]) == 11:
+            return url  # again, full URL is fine
+
+    # If it's something weird, still let TranscriptAPI decide.
+    return url
+
+
+def fetch_transcript_via_service(video_url: str) -> str:
+    """
+    Fetch a YouTube transcript using TranscriptAPI.com (v2).
+
+    We mirror what your personal Claude does:
+
+      GET https://transcriptapi.com/api/v2/youtube/transcript
+          ?video_url=<url or id>
+          &format=text
+          &send_metadata=true
+          &include_timestamp=true
+
+    Response (for format=text) looks like:
+      { "content": "<markdown transcript here>" }
+    """
+    api_key = _get_env_api_key()
+    cleaned_url = _normalise_youtube_url(video_url)
+
+    params = {
+        "video_url": cleaned_url,
+        "format": "text",           # <- as you confirmed
+        "send_metadata": "true",
+        "include_timestamp": "true",
     }
 
-    # Per docs: they accept video_url=VIDEO_ID (11-char ID)
-    params = {
-        "video_url": video_id,
-        # no explicit format so we get full JSON (segments + metadata)
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Accept": "application/json",
     }
 
     try:
-        resp = requests.get(base_url, headers=headers, params=params, timeout=30)
+        resp = requests.get(
+            f"{TRANSCRIPT_API_BASE_URL}/youtube/transcript",
+            params=params,
+            headers=headers,
+            timeout=60,
+        )
     except requests.RequestException as e:
-        raise TranscriptError(f"Request to TranscriptAPI failed: {e}")
+        raise TranscriptError(f"Network error talking to TranscriptAPI: {e}") from e
+
+    # Helpful, explicit error messages
+    if resp.status_code == 401:
+        raise TranscriptError(
+            "TranscriptAPI returned 401 Unauthorized. "
+            "Double-check your TRANSCRIPT_API_KEY in Railway."
+        )
 
     if resp.status_code == 404:
-        # Align with Claude prompt expectations
-        raise TranscriptError("Transcript unavailable. No Leninware outputs can be produced.")
+        # This *now* really means "no transcript", not "wrong endpoint"
+        raise TranscriptError("TranscriptAPI: transcript not found (404).")
 
     if not resp.ok:
+        # Any other status code – surface some detail for debugging
+        text = resp.text[:500]
         raise TranscriptError(
-            f"TranscriptAPI error {resp.status_code}: {resp.text[:300]}"
+            f"TranscriptAPI error {resp.status_code}: {text}"
         )
 
     try:
         data = resp.json()
     except ValueError as e:
-        raise TranscriptError(f"Failed to parse TranscriptAPI response as JSON: {e}")
+        raise TranscriptError(
+            f"TranscriptAPI returned non-JSON response: {resp.text[:200]}"
+        ) from e
 
-    transcript_field = data.get("transcript")
-    if not transcript_field:
-        raise TranscriptError("TranscriptAPI response missing 'transcript' field")
+    content: Optional[str] = data.get("content")
+    if not content:
+        raise TranscriptError(
+            "TranscriptAPI response did not contain a 'content' field. "
+            f"Raw JSON: {data}"
+        )
 
-    # They sometimes return list of segments, sometimes plain string.
-    if isinstance(transcript_field, list):
-        transcript_text = " ".join(seg.get("text", "") for seg in transcript_field)
-    elif isinstance(transcript_field, str):
-        transcript_text = transcript_field
-    else:
-        raise TranscriptError("Unexpected 'transcript' format in response")
-
-    transcript_text = transcript_text.strip()
-    if not transcript_text:
-        raise TranscriptError("Transcript text is empty")
-
-    metadata = data.get("metadata", {}) or {}
-    video_title = metadata.get("title", "").strip() or ""
-    # Channel might be stored under different names; try a few
-    channel_name = (
-        metadata.get("channel")
-        or metadata.get("author")
-        or metadata.get("uploader")
-        or ""
-    )
-    channel_name = str(channel_name).strip()
-
-    canonical_url = f"https://www.youtube.com/watch?v={video_id}"
-
-    return transcript_text, video_title, channel_name, canonical_url
+    return content
