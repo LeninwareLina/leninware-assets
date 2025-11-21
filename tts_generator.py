@@ -1,24 +1,26 @@
+# tts_generator.py
 import os
 from openai import OpenAI
 
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
-if not OPENAI_API_KEY:
-    raise RuntimeError("Missing OPENAI_API_KEY environment variable")
-
-client = OpenAI(api_key=OPENAI_API_KEY)
+VOICE = "nova"          # your chosen voice
+MODEL = "gpt-4o-mini-tts"
+SPEED = 1.3             # 1.3x speed
 
 
 def synthesize_speech(text: str) -> bytes:
     """
-    Returns MP3 audio bytes for the given text.
+    Generate TTS audio for the given text and return raw audio bytes.
     """
-    resp = client.audio.speech.create(
-        model="gpt-4o-mini-tts",
-        voice="alloy",
+    response = client.audio.speech.create(
+        model=MODEL,
+        voice=VOICE,
         input=text,
-        format="mp3",
+        speed=SPEED,
+        response_format="mp3",   # important: use response_format, NOT format
     )
-    # The OpenAI Python 1.x client returns a streaming-like object
-    return resp.read()
+
+    # The Python SDK returns a streaming-like object; read() gives us the bytes
+    audio_bytes = response.read()
+    return audio_bytes
