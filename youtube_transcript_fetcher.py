@@ -2,7 +2,8 @@
 import os
 import requests
 
-TRANSCRIPT_API_URL = "https://transcriptapi.com/api/v2/youtube/transcript/text"
+# Correct endpoint (no /text at the end)
+TRANSCRIPT_API_URL = "https://transcriptapi.com/api/v2/youtube/transcript"
 TRANSCRIPT_API_KEY = os.getenv("TRANSCRIPT_API_KEY")
 
 
@@ -12,7 +13,7 @@ def fetch_transcript(video_url: str) -> str:
 
     params = {
         "video_url": video_url,
-        "format": "text"
+        "format": "text",   # This is what tells it to return plain text
     }
 
     headers = {
