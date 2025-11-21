@@ -28,7 +28,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Leninware online.\n\n"
         "/ping – check status\n"
         "/tts <text> – generate speech\n"
-        "/Claude <url> – analyze YouTube video"
+        "/Claude <YouTube URL> – Leninware analysis of a video"
     )
     await update.message.reply_text(text)
 
@@ -45,39 +45,45 @@ async def tts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     try:
         audio_bytes = synthesize_speech(text)
-        bio = io.BytesIO(audio_bytes)
-        bio.name = "speech.mp3"
-        await update.message.reply_voice(voice=InputFile(bio))
-
     except Exception as e:
         logger.exception("TTS failed")
         await update.message.reply_text(f"TTS failed: {e}")
+        return
+
+    bio = io.BytesIO(audio_bytes)
+    bio.name = "speech.mp3"
+    await update.message.reply_voice(voice=InputFile(bio))
 
 
 async def claude_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
-        await update.message.reply_text("Usage: /Claude <YouTube URL>")
+        await update.message.reply_text("Usage: /Claude <YouTube URL or ID>")
         return
 
-    url = context.args[0].strip()
+    url_or_id = context.args[0].strip()
+
     await update.message.reply_text("Fetching YouTube metadata + captions…")
 
     try:
-        transcript_text = fetch_youtube_transcript(url)
-        metadata = fetch_youtube_metadata(url)
+        transcript_text = fetch_youtube_transcript(url_or_id)
+        metadata = fetch_youtube_metadata(url_or_id)
     except Exception as e:
         logger.exception("YouTube data failure")
         await update.message.reply_text(f"Could not get data from YouTube:\n{e}")
         return
+
+    video_title = metadata.get("video_title", "")
+    channel_name = metadata.get("channel_name", "")
+    video_url = metadata.get("video_url", "")
 
     await update.message.reply_text("Processing with Claude (Leninware mode)…")
 
     try:
         outputs = generate_leninware_from_transcript(
             transcript_text,
-            metadata["video_title"],
-            metadata["channel_name"],
-            metadata["video_url"],
+            video_title,
+            channel_name,
+            video_url,
         )
     except Exception as e:
         logger.exception("Claude failure")
