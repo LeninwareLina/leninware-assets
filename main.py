@@ -1,27 +1,23 @@
-from anthropic import Anthropic
+# main.py
 import os
+from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters
+from telegram_handlers import handle_youtube
 
-client = Anthropic(api_key=os.getenv("CLAUDE_API_KEY"))
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-models_to_test = [
-    "claude-3-opus-latest",
-    "claude-3-5-sonnet-latest",
-    "claude-3-5-haiku-latest",
-    "claude-3-sonnet-20240229",
-    "claude-3-haiku-20240307",
-]
+async def start(update, context):
+    await update.message.reply_text("Leninware online ✊")
 
-print("\n=== Testing AVAILABLE models for this API key ===\n")
+def main():
+    if not BOT_TOKEN:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN missing")
 
-for m in models_to_test:
-    try:
-        print(f"Testing {m}...")
-        resp = client.messages.create(
-            model=m,
-            max_tokens=5,
-            messages=[{"role": "user", "content": "Test"}]
-        )
-        print(f"✔ AVAILABLE: {m}\n")
-    except Exception as e:
-        print(f"✘ NOT AVAILABLE: {m}")
-        print(f"  Error: {e}\n")
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_youtube))
+
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
