@@ -9,9 +9,9 @@ from telegram.ext import (
     ContextTypes,
 )
 
-from youtube_transcript import fetch_youtube_transcript
-from youtube_metadata import get_youtube_metadata
-from claude_client import generate_leninware_outputs
+from youtube_transcript_fetcher import fetch_youtube_transcript
+from youtube_metadata import fetch_youtube_metadata
+from claude_client import generate_leninware_from_transcript
 from tts_generator import synthesize_speech
 
 logging.basicConfig(
@@ -27,8 +27,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = (
         "Leninware online.\n\n"
         "/ping – check status\n"
-        "/tts <text> – generate TTS using OpenAI\n"
-        "/youtube <url or id> – pull captions + Leninware analysis"
+        "/tts <text> – generate speech\n"
+        "/Claude <url> – analyze YouTube video"
     )
     await update.message.reply_text(text)
 
@@ -40,66 +40,60 @@ async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def tts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = " ".join(context.args).strip()
     if not text:
-        await update.message.reply_text("Usage: /tts some text to speak")
+        await update.message.reply_text("Usage: /tts <text>")
         return
 
     try:
         audio_bytes = synthesize_speech(text)
+        bio = io.BytesIO(audio_bytes)
+        bio.name = "speech.mp3"
+        await update.message.reply_voice(voice=InputFile(bio))
+
     except Exception as e:
         logger.exception("TTS failed")
         await update.message.reply_text(f"TTS failed: {e}")
-        return
-
-    bio = io.BytesIO(audio_bytes)
-    bio.name = "speech.mp3"
-    await update.message.reply_voice(voice=InputFile(bio))
 
 
-async def youtube_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def claude_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
-        await update.message.reply_text("Usage: /youtube <YouTube URL or video ID>")
+        await update.message.reply_text("Usage: /Claude <YouTube URL>")
         return
 
-    url_or_id = context.args[0].strip()
-
-    await update.message.reply_text("Fetching YouTube captions and metadata…")
+    url = context.args[0].strip()
+    await update.message.reply_text("Fetching YouTube metadata + captions…")
 
     try:
-        transcript_text = fetch_youtube_transcript(url_or_id)
-        meta = get_youtube_metadata(url_or_id)
+        transcript_text = fetch_youtube_transcript(url)
+        metadata = fetch_youtube_metadata(url)
     except Exception as e:
-        logger.exception("Transcript/metadata fetch failed")
-        await update.message.reply_text(f"Could not get data from YouTube: {e}")
+        logger.exception("YouTube data failure")
+        await update.message.reply_text(f"Could not get data from YouTube:\n{e}")
         return
 
-    video_title = meta.get("video_title", "")
-    channel_name = meta.get("channel_name", "")
-    video_url = meta.get("video_url", "")
-
-    await update.message.reply_text("Asking Claude in Leninware Mode…")
+    await update.message.reply_text("Processing with Claude (Leninware mode)…")
 
     try:
-        outputs = generate_leninware_outputs(
+        outputs = generate_leninware_from_transcript(
             transcript_text,
-            video_title=video_title,
-            channel_name=channel_name,
-            video_url=video_url,
+            metadata["video_title"],
+            metadata["channel_name"],
+            metadata["video_url"],
         )
     except Exception as e:
-        logger.exception("Claude processing failed")
+        logger.exception("Claude failure")
         await update.message.reply_text(f"Claude failed: {e}")
         return
 
-    reply_text = (
-        "🎙 *TTS SCRIPT:*\n"
+    reply = (
+        "TTS SCRIPT:\n"
         f"{outputs['tts']}\n\n"
-        "📌 *TITLE:*\n"
+        "TITLE:\n"
         f"{outputs['title']}\n\n"
-        "📄 *DESCRIPTION:*\n"
+        "DESCRIPTION:\n"
         f"{outputs['description']}"
     )
 
-    await update.message.reply_text(reply_text, parse_mode="Markdown")
+    await update.message.reply_text(reply)
 
 
 def main() -> None:
@@ -112,7 +106,7 @@ def main() -> None:
     app.add_handler(CommandHandler("help", start))
     app.add_handler(CommandHandler("ping", ping))
     app.add_handler(CommandHandler("tts", tts_command))
-    app.add_handler(CommandHandler("youtube", youtube_command))
+    app.add_handler(CommandHandler("Claude", claude_command))
 
     logger.info("Starting Leninware bot…")
     app.run_polling()
