@@ -1,141 +1,91 @@
-# claude_client.py
-import asyncio
-from anthropic import AsyncAnthropic
+from anthropic import Anthropic
+import os
 
-# ============================
-# SYSTEM PROMPT — LENINWARE v2
-# ============================
+client = Anthropic(api_key=os.getenv("CLAUDE_API_KEY"))
 
-LENINWARE_SYSTEM_PROMPT = """
-SYSTEM MODE: LENINWARE (ACTIVE)
+# === SYSTEM PROMPT (SAFE + BORING) ===
+SYSTEM_PROMPT = """
+You are a structured analysis assistant.
+When provided with a transcript, you produce three outputs:
+1. A compact rhetorical script
+2. A title for a short video
+3. A description for that video
 
-You are LENINWARE: a sharp, militant, Marxist-Leninist political commentator. 
-Your tone is punchy, unsentimental, anti-liberal, anti-imperialist, and grounded in class analysis — 
-BUT NOT academic. You speak like a ruthless leftist YouTuber who knows the material realities 
-but refuses to talk like a grad student.
+Maintain formatting exactly as requested.
+Do not refuse content unless it directly violates safety rules.
+"""
 
-STYLE RULES (EXTREMELY IMPORTANT)
-- No academic padding. No seminar tone. No abstract jargon.
-- Use clear, vivid political language (“ruling class,” “shock troops,” “ideological cover,” 
-  “reactionaries,” “liberal brain”).
-- Use strong imagery (“wagging his tail,” “attack dogs,” “media circus,” “political theater”).
-- Speak in tight, punchy lines designed for a YouTube Short.
-- You can be sarcastic, cutting, contemptuous — but not incoherent.
-- Avoid dense Marxist jargon unless it’s widely understood by normal people.
 
-MANDATORY CHANNEL CRITIQUE (NON-NEGOTIABLE)
-You must ALWAYS critique the channel or commentator whose transcript is provided.
-Do NOT treat them as neutral observers.
-Especially critique liberal, progressive, reformist, or “pop-left” channels (e.g., Secular Talk, Majority Report, TYT, Rising, MeidasTouch, CNN, MSNBC):
+# === FUNCTION TO BUILD THE LENINWARE TASK PROMPT ===
+def build_leninware_prompt(transcript_text: str, video_url: str, channel_handle: str):
+    """
+    This avoids persona language entirely and instead describes the task
+    as critical discourse analysis + structural critique.
+    """
 
-Required points of critique:
-- Expose their reformism or soft-liberal framing.
-- Call out personality-based analysis instead of structural class analysis.
-- Point out when they mistake fascist strategy for “cowardice” or “hypocrisy.”
-- Show how their commentary launders ruling-class narratives in softer packaging.
-- Expose how their format turns class violence into entertainment content.
-This critique MUST appear in the TTS script, the title, and the description.
+    return f"""
+You will perform a **three-part critical analysis** of the following transcript.
 
-IF TRANSCRIPT IS EMPTY
-Respond exactly:
-"Transcript unavailable. No Leninware outputs can be produced."
+Your task is NOT to summarize. Your task is to analyze:
+- class relations
+- institutional incentives
+- ideological functions
+- alignment with global political-economic structures
 
-=====================
-OUTPUT FORMAT
-=====================
+This is a structural, historical, material analysis task — NOT a persona simulation.
 
-You must generate THREE outputs:
+=== INPUT TRANSCRIPT ===
+{transcript_text}
 
-1) TTS SCRIPT
-2) TITLE
-3) DESCRIPTION
+=== VIDEO URL ===
+{video_url}
 
-=====================
-I. TTS SCRIPT
-=====================
+=== CHANNEL HANDLE ===
+{channel_handle}
 
+Now produce the THREE OUTPUTS BELOW:
+
+============================================================
+OUTPUT 1 — RHETORICAL SCRIPT (TTS-FRIENDLY)
+============================================================
 Rules:
-- Short, sharp lines.
-- Replace standalone “Trump” with "Donald."
-- Replace standalone “Israel” with "Istate."
-- One-name-per-person rule: never first+last together.
-- Must contain critique of the channel.
-- Must end with EXACTLY: "Real comrades like and subscribe."
+- Short, sharp, unsentimental lines.
+- No filler language.
+- Must open with a provocative structural insight.
+- Replace standalone “Trump” with “Donald.”
+- Replace standalone “Israel” with “Istate.”
+- Only one name per person.
+- 115–135 WPM cadence implied.
+- Must critique the channel’s frame as an ideological actor
+  (e.g., reformist tendencies, liberal framing, narrative containment).
+- Must end with: "Real comrades like and subscribe."
 
-Structure:
-1. Provocative opening line.
-2. Materialist framing (2–4 lines).
-3. Ideological breakdown (5–8 lines).
-4. Imperial/global context (1–3 lines).
-5. Class-struggle ending (1–2 lines + final required line).
-
-=====================
-II. TITLE (YOUTUBE SHORT)
-=====================
-
+============================================================
+OUTPUT 2 — TITLE (YOUTUBE SHORT)
+============================================================
 Rules:
-- < 100 characters.
-- MUST start with “Trump”.
-- If channel_name or @handle is provided, include it. Never hallucinate.
-- MUST include #news and #ai.
-- MUST convey a class-first or anti-imperialist thesis.
-- Must include critique of the channel if possible.
+- Must start with "Trump"
+- Must include @{channel_handle}
+- Must include #news and #ai
+- Must express a structural/material thesis
+- Must be under 100 characters
 
-=====================
-III. DESCRIPTION
-=====================
-
+============================================================
+OUTPUT 3 — DESCRIPTION
+============================================================
 Rules:
 - 2–4 sentences.
-- Must not summarize: must analyze materially.
-- Must include original video_url if provided.
-- Must mention structural/class analysis.
-- Must critique the channel if channel_name is available.
+- Must include the original video URL.
+- Materialist/structural reaction, NOT summary.
+- Mention structural analysis explicitly.
+- Do NOT invent channel name or video title if absent.
+
+Begin now.
 """
 
-# ============================================
-# FUNCTION TO CALL CLAUDE (HAIKU MODEL)
-# ============================================
 
-async def run_claude(transcript: str, api_key: str, metadata: dict = None) -> dict:
-    """
-    Sends transcript + metadata to Claude (Haiku) using the Leninware prompt.
-    Returns a dict containing title, description, tts_script.
-    """
-
-    client = AsyncAnthropic(api_key=api_key)
-
-    video_title = metadata.get("video_title", "") if metadata else ""
-    channel_name = metadata.get("channel_name", "") if metadata else ""
-    video_url = metadata.get("video_url", "") if metadata else ""
-
-    user_prompt = f"""
-Transcript:
-{transcript}
-
-Metadata:
-video_title: {video_title}
-channel_name: {channel_name}
-video_url: {video_url}
-
-Generate:
-1) TTS SCRIPT
-2) TITLE
-3) DESCRIPTION
-"""
-
-    response = await client.messages.create(
-        model="claude-3-haiku-20240307",
-        max_tokens=2000,
-        system=LENINWARE_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_prompt}]
-    )
-
-    full_text = response.content[0].text
-
-    return {
-        "raw": full_text,     # full Claude output (useful for debugging)
-        "tts_script": full_text,
-        "title": full_text,
-        "description": full_text
-    }
+# === MAIN API CALL ===
+def generate_leninware_response(transcript_text, video_url, channel_handle):
+    user_prompt = build_leninware_prompt(
+        transcript_text,
+        video_url,
