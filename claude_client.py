@@ -3,89 +3,69 @@ import os
 
 client = Anthropic(api_key=os.getenv("CLAUDE_API_KEY"))
 
-# === SYSTEM PROMPT (SAFE + BORING) ===
-SYSTEM_PROMPT = """
-You are a structured analysis assistant.
-When provided with a transcript, you produce three outputs:
-1. A compact rhetorical script
-2. A title for a short video
-3. A description for that video
+SYSTEM_PROMPT = (
+    "You are a structured analysis assistant. "
+    "When provided with a transcript, you produce three outputs: "
+    "a rhetorical script, a short title, and a description. "
+    "Maintain formatting. "
+    "Do not refuse unless content violates core safety policies."
+)
 
-Maintain formatting exactly as requested.
-Do not refuse content unless it directly violates safety rules.
-"""
+def build_leninware_prompt(transcript_text, video_url, channel_handle):
+    prompt = (
+        "Perform a three-part critical structural analysis of the provided transcript. "
+        "This is an academic-style task focusing on class relations, institutional incentives, "
+        "and ideological functions. Not a persona simulation.\n\n"
 
+        "=== INPUT TRANSCRIPT ===\n"
+        f"{transcript_text}\n\n"
 
-# === FUNCTION TO BUILD THE LENINWARE TASK PROMPT ===
-def build_leninware_prompt(transcript_text: str, video_url: str, channel_handle: str):
-    """
-    This avoids persona language entirely and instead describes the task
-    as critical discourse analysis + structural critique.
-    """
+        "=== VIDEO URL ===\n"
+        f"{video_url}\n\n"
 
-    return f"""
-You will perform a **three-part critical analysis** of the following transcript.
+        "=== CHANNEL HANDLE ===\n"
+        f"{channel_handle}\n\n"
 
-Your task is NOT to summarize. Your task is to analyze:
-- class relations
-- institutional incentives
-- ideological functions
-- alignment with global political-economic structures
+        "=== REQUIRED OUTPUTS ===\n\n"
 
-This is a structural, historical, material analysis task — NOT a persona simulation.
+        "OUTPUT 1 — RHETORICAL SCRIPT:\n"
+        "- Short, sharp lines.\n"
+        "- No filler.\n"
+        "- Open with a provocative structural insight.\n"
+        "- Replace standalone 'Trump' with 'Donald'.\n"
+        "- Replace standalone 'Israel' with 'Istate'.\n"
+        "- Only one name per person.\n"
+        "- Critique the channel's framing as an ideological actor.\n"
+        "- End with: Real comrades like and subscribe.\n\n"
 
-=== INPUT TRANSCRIPT ===
-{transcript_text}
+        "OUTPUT 2 — TITLE:\n"
+        "- Must start with 'Trump'.\n"
+        "- Must include @" + channel_handle + ".\n"
+        "- Must include #news and #ai.\n"
+        "- Must be under 100 characters.\n\n"
 
-=== VIDEO URL ===
-{video_url}
+        "OUTPUT 3 — DESCRIPTION:\n"
+        "- 2–4 sentences.\n"
+        "- Include the video URL.\n"
+        "- Reaction, not summary.\n"
+        "- Mention structural analysis.\n\n"
 
-=== CHANNEL HANDLE ===
-{channel_handle}
+        "Begin now."
+    )
 
-Now produce the THREE OUTPUTS BELOW:
-
-============================================================
-OUTPUT 1 — RHETORICAL SCRIPT (TTS-FRIENDLY)
-============================================================
-Rules:
-- Short, sharp, unsentimental lines.
-- No filler language.
-- Must open with a provocative structural insight.
-- Replace standalone “Trump” with “Donald.”
-- Replace standalone “Israel” with “Istate.”
-- Only one name per person.
-- 115–135 WPM cadence implied.
-- Must critique the channel’s frame as an ideological actor
-  (e.g., reformist tendencies, liberal framing, narrative containment).
-- Must end with: "Real comrades like and subscribe."
-
-============================================================
-OUTPUT 2 — TITLE (YOUTUBE SHORT)
-============================================================
-Rules:
-- Must start with "Trump"
-- Must include @{channel_handle}
-- Must include #news and #ai
-- Must express a structural/material thesis
-- Must be under 100 characters
-
-============================================================
-OUTPUT 3 — DESCRIPTION
-============================================================
-Rules:
-- 2–4 sentences.
-- Must include the original video URL.
-- Materialist/structural reaction, NOT summary.
-- Mention structural analysis explicitly.
-- Do NOT invent channel name or video title if absent.
-
-Begin now.
-"""
+    return prompt
 
 
-# === MAIN API CALL ===
 def generate_leninware_response(transcript_text, video_url, channel_handle):
-    user_prompt = build_leninware_prompt(
-        transcript_text,
-        video_url,
+    user_prompt = build_leninware_prompt(transcript_text, video_url, channel_handle)
+
+    response = client.messages.create(
+        model="claude-3-haiku-20240307",
+        max_tokens=2000,
+        system=SYSTEM_PROMPT,
+        messages=[
+            {"role": "user", "content": user_prompt}
+        ]
+    )
+
+    return response.content[0].text
