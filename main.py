@@ -1,94 +1,109 @@
-import os
+import io
 import logging
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+import os
 
-from claude_client import get_claude_output
-from tts_generator import generate_tts_audio
+from telegram import Update, InputFile
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes,
+)
 
-logging.basicConfig(level=logging.INFO)
+from youtube_transcript import fetch_youtube_transcript
+from claude_client import generate_leninware_from_transcript
+from tts_generator import synthesize_speech
+
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
 logger = logging.getLogger(__name__)
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-if not TELEGRAM_TOKEN:
-    raise RuntimeError("TELEGRAM_BOT_TOKEN env var is missing")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_API_KEY")
 
 
-# ============ COMMAND HANDLERS ============
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = (
+        "Leninware online.\n\n"
+        "/ping – check if I'm alive\n"
+        "/tts <text> – generate TTS using OpenAI\n"
+        "/youtube <url or video_id> – pull captions and run Leninware analysis"
+    )
+    await update.message.reply_text(text)
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Leninware pipeline online.\n\n"
-        "Commands:\n"
-        "/ping - check if I'm alive\n"
-        "/claude <YouTube URL> - process video\n"
-        "/tts <text> - generate speech test"
+
+async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text("Leninware online ✊")
+
+
+async def tts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = " ".join(context.args).strip()
+    if not text:
+        await update.message.reply_text("Usage: /tts some text to speak")
+        return
+
+    try:
+        audio_bytes = synthesize_speech(text)
+    except Exception as e:
+        logger.exception("TTS failed")
+        await update.message.reply_text(f"TTS failed: {e}")
+        return
+
+    bio = io.BytesIO(audio_bytes)
+    bio.name = "speech.mp3"
+    await update.message.reply_voice(voice=InputFile(bio))
+
+
+async def youtube_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args:
+        await update.message.reply_text("Usage: /youtube <YouTube URL or video ID>")
+        return
+
+    url_or_id = context.args[0]
+
+    await update.message.reply_text("Fetching YouTube captions…")
+
+    try:
+        transcript_text = fetch_youtube_transcript(url_or_id)
+    except Exception as e:
+        logger.exception("Transcript fetch failed")
+        await update.message.reply_text(f"Could not get captions: {e}")
+        return
+
+    await update.message.reply_text("Asking Claude (Leninware mode)…")
+
+    try:
+        outputs = generate_leninware_from_transcript(transcript_text)
+    except Exception as e:
+        logger.exception("Claude processing failed")
+        await update.message.reply_text(f"Claude failed: {e}")
+        return
+
+    reply = (
+        "TTS SCRIPT:\n"
+        f"{outputs['tts']}\n\n"
+        "TITLE:\n"
+        f"{outputs['title']}\n\n"
+        "DESCRIPTION:\n"
+        f"{outputs['description']}"
     )
 
-
-async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("PONG — pipeline is running.")
+    await update.message.reply_text(reply)
 
 
-async def claude(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle Claude generation: title, description, tts_script."""
-    if len(context.args) == 0:
-        await update.message.reply_text("Usage: /claude <YouTube URL>")
-        return
-
-    youtube_url = context.args[0]
-    await update.message.reply_text("Asking Claude...")
-
-    try:
-        data = get_claude_output(youtube_url)
-
-        title = data.get("title", "")
-        desc = data.get("description", "")
-        script = data.get("tts_script", "")
-
-        await update.message.reply_text(
-            f"✔ *Claude Output Ready*\n\n"
-            f"*Title:* {title}\n\n"
-            f"*Description:* {desc}\n\n"
-            f"*TTS Script:* {script[:500]}..."
-            , parse_mode="Markdown"
-        )
-
-    except Exception as e:
-        await update.message.reply_text(f"Claude error: {e}")
-
-
-async def tts(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Test TTS engine standalone."""
-    if len(context.args) == 0:
-        await update.message.reply_text("Usage: /tts <text>")
-        return
-
-    text = " ".join(context.args)
-    await update.message.reply_text("Generating Leninware TTS...")
-
-    try:
-        output_path = "test_tts.mp3"
-        generate_tts_audio(text, output_path)
-        await update.message.reply_audio(audio=open(output_path, "rb"))
-
-    except Exception as e:
-        await update.message.reply_text(f"TTS error: {e}")
-
-
-# ============ MAIN APPLICATION ============
-
-def main():
-    logger.info("Starting Telegram bot...")
+def main() -> None:
+    if not TELEGRAM_TOKEN:
+        raise RuntimeError("Missing TELEGRAM_API_KEY environment variable")
 
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", start))
     app.add_handler(CommandHandler("ping", ping))
-    app.add_handler(CommandHandler("claude", claude))
-    app.add_handler(CommandHandler("tts", tts))
+    app.add_handler(CommandHandler("tts", tts_command))
+    app.add_handler(CommandHandler("youtube", youtube_command))
 
-    logger.info("Application started.")
+    logger.info("Starting Leninware bot…")
     app.run_polling()
 
 
