@@ -1,26 +1,42 @@
-# tts_generator.py
 import os
+import io
+
 from openai import OpenAI
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-VOICE = "nova"          # your chosen voice
-MODEL = "gpt-4o-mini-tts"
-SPEED = 1.3             # 1.3x speed
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 
-def synthesize_speech(text: str) -> bytes:
+class TTSError(Exception):
+    """Raised when TTS generation fails."""
+
+
+def _get_client() -> OpenAI:
+    if not OPENAI_API_KEY:
+        raise TTSError("Missing OPENAI_API_KEY environment variable")
+    return OpenAI(api_key=OPENAI_API_KEY)
+
+
+def generate_tts(text: str) -> bytes:
     """
-    Generate TTS audio for the given text and return raw audio bytes.
+    Generate speech audio (MP3) from text using OpenAI TTS.
+
+    Returns raw MP3 bytes.
     """
+    if not text or not text.strip():
+        raise TTSError("Refusing to synthesize empty text")
+
+    client = _get_client()
+
+    # Use nova voice; instruct for ~1.3x speed.
     response = client.audio.speech.create(
-        model=MODEL,
-        voice=VOICE,
+        model="gpt-4o-mini-tts",
+        voice="nova",
         input=text,
-        speed=SPEED,
-        response_format="mp3",   # important: use response_format, NOT format
+        instructions="Speak about 1.3x faster than a typical narration, "
+                     "with clear, intense delivery.",
     )
 
-    # The Python SDK returns a streaming-like object; read() gives us the bytes
-    audio_bytes = response.read()
-    return audio_bytes
+    buf = io.BytesIO()
+    for chunk in response.iter_bytes():
+        buf.write(chunk)
+    return buf.getvalue()
