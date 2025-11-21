@@ -1,5 +1,4 @@
-python-telegram-bot==20.6
-youtube-transcript-api
-anthropic
+python-telegram-bot==20.7
 openai
-python-dotenv
+anthropic
+youtube-transcript-api
