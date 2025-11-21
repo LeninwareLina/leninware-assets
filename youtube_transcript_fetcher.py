@@ -63,9 +63,11 @@ def fetch_transcript_via_transcriptapi(video_url: str) -> str:
         data = resp.json()
     except ValueError as e:
         raise TranscriptError(f"TranscriptAPI: invalid JSON response: {e}") from e
+# DEBUG LOG — TEMPORARY
+import logging
+logger = logging.getLogger(__name__)
+logger.error("TranscriptAPI raw response: %s", data)
 
-    content = data.get("content")
-    if not content or not isinstance(content, str):
-        raise TranscriptError("TranscriptAPI: response missing 'content' field.")
-
-    return content
+content = data.get("content")
+if not content or not isinstance(content, str):
+    raise TranscriptError("TranscriptAPI: response missing 'content' field.")
