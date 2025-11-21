@@ -1,55 +1,60 @@
 import os
 import requests
-import re
+from typing import Optional
 
-API_KEY = os.getenv("TRANSCRIPT_API_KEY")
 
-def extract_video_id(url_or_id: str) -> str:
+TRANSCRIPT_API_KEY = os.getenv("TRANSCRIPT_API_KEY")
+TRANSCRIPT_API_URL = "https://transcriptapi.com/api/v1/transcript"
+
+
+class TranscriptError(Exception):
+    """Raised when we cannot get a transcript for a video."""
+
+
+def fetch_transcript_via_service(video_url: str) -> str:
     """
-    Takes either a YouTube URL or a raw ID
-    and returns the video ID.
+    Fetch the transcript as plain text from TranscriptAPI.com.
+
+    `video_url` can be either a full YouTube URL or a bare video ID.
+    We just pass it through in the `video_url` parameter.
     """
-    if "youtube.com" in url_or_id or "youtu.be" in url_or_id:
-        match = re.search(r"(v=|youtu\.be/)([\w-]+)", url_or_id)
-        if match:
-            return match.group(2)
-    return url_or_id
+    if not TRANSCRIPT_API_KEY:
+        raise TranscriptError("Missing TRANSCRIPT_API_KEY environment variable")
 
+    if not video_url:
+        raise TranscriptError("Empty video URL")
 
-def fetch_youtube_transcript(url_or_id: str):
-    """
-    Fetches transcript + metadata via TranscriptAPI.com
-    Returns (transcript_text, title, channel)
-    Raises exceptions with clean explanations.
-    """
-
-    if not API_KEY:
-        raise RuntimeError("TRANSCRIPT_API_KEY not set in environment variables.")
-
-    video_id = extract_video_id(url_or_id)
-
-    url = "https://transcriptapi.com/api/v1/transcript"
-    params = {"video_url": video_id}
-    headers = {"Authorization": f"Bearer {API_KEY}"}
+    headers = {
+        "Authorization": f"Bearer {TRANSCRIPT_API_KEY}",
+    }
+    params = {
+        "video_url": video_url,
+        "format": "text",  # plain text body
+    }
 
     try:
-        response = requests.get(url, params=params, headers=headers)
-        response.raise_for_status()
-    except requests.exceptions.HTTPError as e:
-        if response.status_code == 404:
-            raise RuntimeError("TranscriptAPI: transcript not found (404)")
-        elif response.status_code == 401:
-            raise RuntimeError("TranscriptAPI: unauthorized (401). Wrong API key?")
-        else:
-            raise RuntimeError(f"TranscriptAPI HTTP error: {e}")
+        resp = requests.get(
+            TRANSCRIPT_API_URL,
+            headers=headers,
+            params=params,
+            timeout=30,
+        )
+    except requests.RequestException as e:
+        raise TranscriptError(f"Network error talking to TranscriptAPI: {e}") from e
 
-    data = response.json()
+    if resp.status_code == 404:
+        # Service explicitly says no transcript for this video.
+        raise TranscriptError("TranscriptAPI: transcript not found (404)")
 
-    transcript_items = data.get("transcript", [])
-    transcript_text = " ".join([entry["text"] for entry in transcript_items])
+    try:
+        resp.raise_for_status()
+    except requests.HTTPError as e:
+        raise TranscriptError(
+            f"TranscriptAPI HTTP {resp.status_code}: {resp.text[:200]}"
+        ) from e
 
-    metadata = data.get("metadata", {})
-    title = metadata.get("title", "Unknown Title")
-    channel = metadata.get("channel_name", "Unknown Channel")
+    text = resp.text.strip()
+    if not text:
+        raise TranscriptError("TranscriptAPI returned empty transcript")
 
-    return transcript_text, title, channel
+    return text
