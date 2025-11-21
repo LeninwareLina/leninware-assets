@@ -1,23 +1,24 @@
 # main.py
 import os
-from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters
+import asyncio
+from telegram.ext import ApplicationBuilder, MessageHandler, filters
 from telegram_handlers import handle_youtube
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-async def start(update, context):
-    await update.message.reply_text("Leninware online ✊")
+async def incoming(update, context):
+    text = update.message.text
+    reply = handle_youtube(text)
+    await update.message.reply_text(reply)
 
 def main():
-    if not BOT_TOKEN:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN missing")
+    application = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    application.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, incoming)
+    )
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_youtube))
-
-    app.run_polling()
+    application.run_polling()
 
 if __name__ == "__main__":
     main()
