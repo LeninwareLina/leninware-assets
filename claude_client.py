@@ -2,70 +2,21 @@
 import os
 from anthropic import Anthropic
 
-client = Anthropic(api_key=os.getenv("CLAUDE_API_KEY"))
+MODEL_NAME = "claude-3-5-sonnet-latest"
 
-# The model your account supports
-MODEL = "claude-3-haiku-20240307"
+def claude_ping():
+    api_key = os.getenv("CLAUDE_API_KEY")
+    if not api_key:
+        raise RuntimeError("CLAUDE_API_KEY missing")
 
-def build_leninware_prompt(transcript: str, url: str, channel: str) -> str:
-    return f"""
-You are producing a materialist, anti-liberal structural analysis of a YouTube political clip.
-
-You must output THREE JSON fields exactly:
-- "tts"
-- "title"
-- "description"
-
-The transcript of the video is below:
----
-{transcript}
----
-
-Use the following rules when generating the output:
-
-1. The "tts" output must:
-   - Be sharp, punchy, unsentimental.
-   - Avoid filler, avoid soft liberal framing.
-   - Critique the CHANNEL itself ({channel}) for reformism, liberal framing, institutional capture, or ideological drift.
-   - End with: "Real comrades like and subscribe."
-   - Use only one name per person, no first + last.
-
-2. The "title" output must:
-   - Be under 100 characters.
-   - Start with "Trump"
-   - Include "@{channel}"
-   - Include #news and #ai
-   - Express a class-first or anti-imperialist idea.
-
-3. The "description" must:
-   - Be 2–4 sentences.
-   - Reference the URL: {url}
-   - Mention structural analysis.
-   - Not hallucinate video titles.
-
-Return ONLY valid JSON. No extra text.
-    """
-
-def generate_leninware_response(transcript: str, url: str, channel: str) -> dict:
-    prompt = build_leninware_prompt(transcript, url, channel)
+    client = Anthropic(api_key=api_key)
 
     response = client.messages.create(
-        model=MODEL,
-        max_tokens=1500,
+        model=MODEL_NAME,
+        max_tokens=20,
         messages=[
-            {"role": "user", "content": prompt}
+            {"role": "user", "content": "Reply with: PONG"}
         ]
     )
 
-    # Extract text from Claude
-    raw = response.content[0].text
-
-    import json
-    try:
-        return json.loads(raw)
-    except Exception:
-        return {
-            "tts": "Error: Invalid model output.",
-            "title": "Error",
-            "description": "The model returned invalid JSON."
-        }
+    return response.content[0].text.strip()
