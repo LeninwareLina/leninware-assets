@@ -1,167 +1,182 @@
 # youtube_ingest.py
-#
-# Leninware Viral Discovery Engine (v2)
-# Scrapes highly-viral political channels + keyword trending.
+"""
+Fetch recent videos from a set of channels using their RSS feeds,
+then enrich them with stats from the YouTube Data API v3.
+
+This module is read-only: it never uploads or changes anything on YouTube.
+"""
 
 import os
+import datetime as dt
+from typing import List, Dict, Any
+from urllib.parse import urlparse, parse_qs
+
+import feedparser
 import requests
-from googleapiclient.discovery import build
 
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
 if not YOUTUBE_API_KEY:
-    raise RuntimeError("YOUTUBE_API_KEY not found in environment variables.")
-
-yt = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
-
-
-############################################################
-# 1. HIGH-VIRALITY POLITICAL CHANNELS (SHORTS HEAVY)
-############################################################
-
-HIGH_VIRAL_CHANNELS = [
-    # Left commentary clips
-    "UCJdKr0Bgd_5saZYqLCa9mng",  # Pakman Clips
-    "UCX7dCJz6Fr7HabVt5dLJ4gQ",  # MeidasTouch Shorts
-    "UCZV8p0kB6k2Jf85sHft8ZSw",  # Farron Cousins Clips
-    "UC6eYbBvIwq9VXYg7Wc6AtAw",  # Breaking Points Clips
-
-    # Right-wing viral outrage
-    "UCx6h-dHQG2fE9AmlFWWlZug",  # Shapiro Shorts
-    "UC0uVZd8N7cqZvP7Vmbg-h5w",  # Tim Pool Clips
-    "UCjGMDjhrOrN3i_yS4bTrZHA",  # Jordan Peterson Clips
-    "UC0v-tlzsn0QZwJnkiaUSJVQ",  # PragerU Shorts
-
-    # Debate/influencer
-    "UC554eY5jNUfDq3yDOJYirOQ",  # HasanAbi Clips
-    "UC0rE2qqzdGdP9TI-ZXY2xjw",  # Destiny Clips
-    "UCdJ9oJ2Guf8v9lCWdnmCyIw",  # H3 Podcast Clips
-
-    # Misc viral political/tiktok repost channels
-    "UC_6Wk2kJ1L3edQY12znl5sA",  # PatriotTakes
-    "UCG8rbF3g2AMX70yOd8vqIZg",  # More Perfect Union
-    "UCU9YqkZk_9D_q7D1uUM7ogg",  # TikTok Politics Compilations
-]
+    print("[youtube_ingest] WARNING: YOUTUBE_API_KEY is not set; "
+          "stats lookups will fail.")
 
 
-############################################################
-# Fetch recent uploads from these channels
-############################################################
+# === Configure target channels here =========================================
 
-def fetch_recent_from_channels(max_results=15):
-    all_videos = []
-
-    for channel_id in HIGH_VIRAL_CHANNELS:
-        try:
-            search = yt.search().list(
-                part="snippet",
-                channelId=channel_id,
-                order="date",
-                type="video",
-                maxResults=max_results
-            ).execute()
-
-            for item in search.get("items", []):
-                vid = item["id"]["videoId"]
-                title = item["snippet"]["title"]
-
-                all_videos.append({
-                    "title": title,
-                    "video_id": vid,
-                    "url": f"https://www.youtube.com/watch?v={vid}",
-                    "views": None,
-                    "published": item["snippet"]["publishedAt"]
-                })
-        except Exception as e:
-            print(f"Error fetching channel {channel_id}: {e}")
-
-    return all_videos
+# TODO: put the real channel IDs you care about.
+# You can grab them from the channel URL:
+#   https://www.youtube.com/channel/UCxxxx -> channel_id is the UCxxxx part
+CHANNEL_FEEDS: Dict[str, str] = {
+    "Secular Talk": "https://www.youtube.com/feeds/videos.xml?channel_id=REPLACE_ME",
+    "BBC News": "https://www.youtube.com/feeds/videos.xml?channel_id=REPLACE_ME",
+    "CNN": "https://www.youtube.com/feeds/videos.xml?channel_id=REPLACE_ME",
+    "MeidasTouch": "https://www.youtube.com/feeds/videos.xml?channel_id=REPLACE_ME",
+    "Majority Report": "https://www.youtube.com/feeds/videos.xml?channel_id=REPLACE_ME",
+}
 
 
-############################################################
-# 2. TRENDING SEARCH TERMS (Political hot zones)
-############################################################
+# === Helpers ================================================================
 
-HOT_KEYWORDS = [
-    "Trump", "Donald", "Biden", "election", "fascist",
-    "Istate", "Gaza", "genocide", "Ukraine",
-    "debate", "hearing", "indictment", "Congress",
-    "breaking news", "protest", "ruling", "speech"
-]
+def _extract_video_id_from_url(url: str) -> str | None:
+    """Best-effort extraction of a YouTube video ID from a URL."""
+    if not url:
+        return None
 
-def keyword_trending(max_per_keyword=5):
-    results = []
+    parsed = urlparse(url)
 
-    for keyword in HOT_KEYWORDS:
-        try:
-            search = yt.search().list(
-                part="snippet",
-                q=keyword,
-                type="video",
-                order="relevance",
-                maxResults=max_per_keyword
-            ).execute()
+    # Short links: https://youtu.be/VIDEO_ID
+    if parsed.netloc in {"youtu.be", "www.youtu.be"}:
+        return parsed.path.lstrip("/") or None
 
-            for item in search.get("items", []):
-                vid = item["id"]["videoId"]
-                results.append({
-                    "title": item["snippet"]["title"],
-                    "video_id": vid,
-                    "url": f"https://www.youtube.com/watch?v={vid}",
-                    "views": None,
-                    "published": item["snippet"]["publishedAt"]
-                })
-        except Exception as e:
-            print(f"Keyword fetch error ({keyword}): {e}")
+    # Normal watch URLs: https://www.youtube.com/watch?v=VIDEO_ID
+    qs = parse_qs(parsed.query)
+    if "v" in qs and qs["v"]:
+        return qs["v"][0]
 
-    return results
+    return None
 
 
-############################################################
-# 3. VIDEO DETAIL ENRICHMENT
-############################################################
-
-def enrich_video_details(video_list):
-    for vid in video_list:
-        try:
-            meta = yt.videos().list(
-                part="statistics",
-                id=vid["video_id"]
-            ).execute()
-
-            stats = meta["items"][0]["statistics"]
-            vid["views"] = int(stats.get("viewCount", 0))
-
-        except Exception as e:
-            print(f"Error enriching {vid['video_id']}: {e}")
-
-    return video_list
+def _published_to_datetime(entry) -> dt.datetime:
+    """Convert feedparser's published field into an aware datetime."""
+    # feedparser gives published_parsed as time.struct_time
+    if hasattr(entry, "published_parsed") and entry.published_parsed:
+        t = entry.published_parsed
+        return dt.datetime(
+            t.tm_year,
+            t.tm_mon,
+            t.tm_mday,
+            t.tm_hour,
+            t.tm_min,
+            t.tm_sec,
+            tzinfo=dt.timezone.utc,
+        )
+    # Fallback: now
+    return dt.datetime.now(dt.timezone.utc)
 
 
-############################################################
-# PUBLIC ENTRY POINT (USED BY THE VIRALITY WORKER)
-############################################################
+# === Public API =============================================================
 
-def get_candidate_videos():
+def fetch_recent_from_feeds(max_per_feed: int = 10) -> List[Dict[str, Any]]:
     """
-    Returns a combined list of:
-    - Latest videos from high-virality channels
-    - Keyword-based political trending
-    - All enriched with view counts
+    Pull recent videos from each configured RSS feed.
+
+    Returns a list of dicts:
+        {
+            "channel": str,
+            "title": str,
+            "url": str,
+            "video_id": str,
+            "published_at": datetime,
+        }
     """
+    items: List[Dict[str, Any]] = []
 
-    print("Fetching from high-virality channels…")
-    ch = fetch_recent_from_channels()
+    for channel, feed_url in CHANNEL_FEEDS.items():
+        print(f"[youtube_ingest] Fetching feed for {channel}: {feed_url}")
+        feed = feedparser.parse(feed_url)
 
-    print("Fetching from keyword trending…")
-    kw = keyword_trending()
+        for entry in feed.entries[:max_per_feed]:
+            link = getattr(entry, "link", "")
+            video_id = getattr(entry, "yt_videoid", None) or _extract_video_id_from_url(
+                link
+            )
 
-    combined = ch + kw
-    print(f"Total candidates fetched: {len(combined)}")
+            if not video_id:
+                print(f"[youtube_ingest] Could not extract video id for entry: {link}")
+                continue
 
-    print("Enriching metadata…")
-    enriched = enrich_video_details(combined)
+            items.append(
+                {
+                    "channel": channel,
+                    "title": getattr(entry, "title", "").strip(),
+                    "url": link,
+                    "video_id": video_id,
+                    "published_at": _published_to_datetime(entry),
+                }
+            )
 
-    enriched.sort(key=lambda x: x["views"] or 0, reverse=True)
+    print(f"[youtube_ingest] Collected {len(items)} recent videos from feeds.")
+    return items
 
-    return enriched
+
+def enrich_with_stats(videos: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    For each video dict (must contain 'video_id'), attach basic statistics
+    from YouTube Data API.
+
+    Adds keys:
+        view_count, like_count, comment_count
+    """
+    if not videos:
+        return []
+
+    if not YOUTUBE_API_KEY:
+        print("[youtube_ingest] No YOUTUBE_API_KEY; returning videos without stats.")
+        # still return original list so the rest of the pipeline can run in a basic way
+        return videos
+
+    url = "https://www.googleapis.com/youtube/v3/videos"
+
+    # API supports up to 50 IDs per call; we'll keep it simple and do one by one.
+    for v in videos:
+        vid = v["video_id"]
+        params = {
+            "part": "statistics",
+            "id": vid,
+            "key": YOUTUBE_API_KEY,
+        }
+        try:
+            resp = requests.get(url, params=params, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            items = data.get("items", [])
+            if not items:
+                print(f"[youtube_ingest] No stats for {vid}")
+                continue
+
+            stats = items[0].get("statistics", {})
+            v["view_count"] = int(stats.get("viewCount", 0))
+            v["like_count"] = int(stats.get("likeCount", 0))
+            v["comment_count"] = int(stats.get("commentCount", 0))
+        except Exception as e:
+            print(f"[youtube_ingest] Error fetching stats for {vid}: {e}")
+
+    return videos
+
+
+def get_candidate_videos(max_per_feed: int = 10) -> List[Dict[str, Any]]:
+    """
+    Convenience: fetch from RSS feeds and enrich with stats in one call.
+    """
+    base = fetch_recent_from_feeds(max_per_feed=max_per_feed)
+    return enrich_with_stats(base)
+
+
+if __name__ == "__main__":
+    # quick manual test
+    vids = get_candidate_videos(max_per_feed=3)
+    for v in vids:
+        print(
+            f"{v['channel']} | {v['title']} | views={v.get('view_count')} "
+            f"likes={v.get('like_count')} comments={v.get('comment_count')}"
+        )
