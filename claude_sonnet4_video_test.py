@@ -1,70 +1,47 @@
-# claude_sonnet4_video_test.py
 import os
 import requests
 import anthropic
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-TRANSCRIPT_API_KEY = os.getenv("TRANSCRIPT_API_KEY")
 
 MODEL = "claude-sonnet-4-20250514"
+TRANSCRIPT_API_KEY = os.getenv("TRANSCRIPT_API_KEY")
 
-SYSTEM = """
-You are LENINWARE — a militant, structural, anti-liberal analytic engine.
+def get_transcript(video_url: str):
+    endpoint = "https://transcriptapi.com/api/v2/youtube/transcript"
+    headers = {"Authorization": f"Bearer {TRANSCRIPT_API_KEY}"}
+    params = {"video_url": video_url, "format": "text"}
 
-Your output must be ONE block only:
+    r = requests.get(endpoint, headers=headers, params=params)
+    r.raise_for_status()
+    return r.text
 
-TTS_SCRIPT:
-- 12–18 lines
-- extremely provocative first line
-- punchy, unsentimental
-- replace 'Trump' with 'Donald'
-- replace 'Israel' with 'Istate'
-- identify class forces, structural incentives, ideological function, and imperial order
-- attack liberal framing, reformism, and media laundering
-- end with: Real comrades like and subscribe.
-
-NO labels, NO explanations.
-"""
-
-def get_transcript(video_url):
-    try:
-        resp = requests.get(
-            "https://transcriptapi.com/api/v2/youtube/transcript",
-            params={"video_url": video_url, "format": "text"},
-            headers={"Authorization": f"Bearer {TRANSCRIPT_API_KEY}"}
-        )
-        if resp.status_code != 200:
-            return None, f"TranscriptAPI error: {resp.text}"
-        return resp.text, None
-    except Exception as e:
-        return None, f"TranscriptAPI exception: {e}"
-
-def generate_leninware(transcript):
-    USER = f"Transcript:\n{transcript}\n\nGenerate the TTS_SCRIPT only."
-
-    try:
-        resp = client.messages.create(
-            model=MODEL,
-            system=SYSTEM,
-            max_tokens=900,
-            messages=[{"role": "user", "content": USER}]
-        )
-        return resp.content[0].text
-    except Exception as e:
-        return f"Claude error: {e}"
+LENINWARE_TTS_PROMPT = {
+    "role": "system",
+    "content": [
+        {
+            "type": "text",
+            "text": "SYSTEM: Leninware TTS Mode Active.\nProduce 1 ultra-provocative TTS script only.\nShort, punchy, ruthless, anti-imperialist, class-first.\nNo moralizing. No both-sides. No softness.\nReplace 'Trump' with 'Donald'. Replace 'Israel' with 'Istate'."
+        }
+    ]
+}
 
 if __name__ == "__main__":
-    print("Paste a YouTube URL to test Leninware Sonnet-4:")
-    url = input("> ").strip()
+    url = "https://youtu.be/QrrhLB-JVno?si=_6927fgOJy0-7H1c"
 
-    transcript, err = get_transcript(url)
-    if err:
-        print("\n--- TRANSCRIPT ERROR ---")
-        print(err)
-        exit()
+    print("Fetching transcript...")
+    transcript = get_transcript(url)
+    print("Transcript retrieved, sending to Claude Sonnet-4...\n")
 
-    print("\n--- TRANSCRIPT FETCHED ---")
-    print("(length:", len(transcript), "characters )")
+    msg = client.messages.create(
+        model=MODEL,
+        max_tokens=600,
+        system=LENINWARE_TTS_PROMPT["content"][0]["text"],
+        messages=[{
+            "role": "user",
+            "content": transcript
+        }]
+    )
 
-    print("\n--- LENINWARE OUTPUT ---\n")
-    print(generate_leninware(transcript))
+    print("==== LENINWARE SONNET-4 OUTPUT ====\n")
+    print(msg.content[0].text)
