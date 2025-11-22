@@ -1,182 +1,154 @@
-# youtube_ingest.py
+# leninware_video_pipeline.py
 """
-Fetch recent videos from a set of channels using their RSS feeds,
-then enrich them with stats from the YouTube Data API v3.
+Leninware video pipeline:
 
-This module is read-only: it never uploads or changes anything on YouTube.
+1. Fetch transcript for a YouTube video using TranscriptAPI.
+2. Send transcript to Claude Sonnet-4 with the Leninware TTS system prompt.
+3. (Hook) Optionally render a video via Shotstack.
+4. (Hook) Optionally upload rendered video to YouTube.
+
+Only steps 1 & 2 are fully implemented. Shotstack + upload are provided as
+stubs with clear TODOs so you can wire in credentials and templates later.
 """
 
 import os
-import datetime as dt
-from typing import List, Dict, Any
-from urllib.parse import urlparse, parse_qs
+from typing import Optional
 
-import feedparser
 import requests
+import anthropic
 
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+# === API keys ===============================================================
 
-if not YOUTUBE_API_KEY:
-    print("[youtube_ingest] WARNING: YOUTUBE_API_KEY is not set; "
-          "stats lookups will fail.")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+TRANSCRIPT_API_KEY = os.getenv("TRANSCRIPT_API_KEY")
+SHOTSTACK_API_KEY = os.getenv("SHOTSTACK_API_KEY")  # optional, for later
+
+client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+MODEL = "claude-sonnet-4-20250514"
+
+LENINWARE_TTS_SYSTEM = """
+SYSTEM: Leninware TTS Mode.
+Produce ONE short, viral, Gen-Z aware, ruthless Marxist-Leninist commentary.
+Punchy, direct, structurally sharp. No academic jargon. No both-sides. No moralizing.
+
+Rules:
+- Call out the creator by name if it’s clear from the transcript.
+- Replace “Trump” with “Donald”.
+- Replace “Israel” with “Istate”.
+- Focus on class, imperialism, racial capitalism, and media co-optation.
+- Assume this will be read by a TTS voice, so keep sentences tight and rhythmic.
+- Always end with: “Real comrades like and subscribe.”
+"""
 
 
-# === Configure target channels here =========================================
+# === Transcript step ========================================================
 
-# TODO: put the real channel IDs you care about.
-# You can grab them from the channel URL:
-#   https://www.youtube.com/channel/UCxxxx -> channel_id is the UCxxxx part
-CHANNEL_FEEDS: Dict[str, str] = {
-    "Secular Talk": "https://www.youtube.com/feeds/videos.xml?channel_id=REPLACE_ME",
-    "BBC News": "https://www.youtube.com/feeds/videos.xml?channel_id=REPLACE_ME",
-    "CNN": "https://www.youtube.com/feeds/videos.xml?channel_id=REPLACE_ME",
-    "MeidasTouch": "https://www.youtube.com/feeds/videos.xml?channel_id=REPLACE_ME",
-    "Majority Report": "https://www.youtube.com/feeds/videos.xml?channel_id=REPLACE_ME",
-}
+def fetch_transcript(video_url: str) -> str:
+    """Get plain-text transcript from TranscriptAPI."""
+    endpoint = "https://transcriptapi.com/api/v2/youtube/transcript"
+    headers = {"Authorization": f"Bearer {TRANSCRIPT_API_KEY}"}
+    params = {"video_url": video_url, "format": "text"}
+
+    resp = requests.get(endpoint, headers=headers, params=params, timeout=30)
+    resp.raise_for_status()
+    return resp.text
 
 
-# === Helpers ================================================================
+# === Claude step ============================================================
 
-def _extract_video_id_from_url(url: str) -> str | None:
-    """Best-effort extraction of a YouTube video ID from a URL."""
-    if not url:
+def generate_leninware_tts_from_url(video_url: str) -> str:
+    """
+    High-level helper: given a YouTube URL, fetch the transcript and generate
+    a Leninware-style TTS script using Claude Sonnet-4.
+    """
+    print(f"[leninware_pipeline] Fetching transcript for: {video_url}")
+    transcript = fetch_transcript(video_url)
+
+    print("[leninware_pipeline] Sending transcript to Claude Sonnet-4...")
+    msg = client.messages.create(
+        model=MODEL,
+        max_tokens=600,
+        system=LENINWARE_TTS_SYSTEM.strip(),
+        messages=[
+            {
+                "role": "user",
+                "content": transcript,
+            }
+        ],
+    )
+
+    text = msg.content[0].text
+    print("[leninware_pipeline] Received Leninware TTS script.")
+    return text
+
+
+# === Shotstack hook (stub for now) =========================================
+
+def render_video_with_shotstack(
+    tts_script: str,
+    title: str,
+) -> Optional[str]:
+    """
+    Placeholder for Shotstack integration.
+
+    Right now this ONLY logs what it would do and returns None.
+
+    TODO when you're ready:
+    - Use the Shotstack REST API or Python SDK.
+    - Build a simple template that:
+        * uses your TTS audio file (once OpenAI audio is wired in),
+        * adds background footage or images,
+        * overlays subtitles/captions.
+    - POST the 'edit' JSON to Shotstack and poll for a completed render URL.
+
+    Return:
+        The public URL or file path of the rendered video, or None if skipped.
+    """
+    if not SHOTSTACK_API_KEY:
+        print("[leninware_pipeline] SHOTSTACK_API_KEY not set; "
+              "skipping Shotstack render.")
         return None
 
-    parsed = urlparse(url)
-
-    # Short links: https://youtu.be/VIDEO_ID
-    if parsed.netloc in {"youtu.be", "www.youtu.be"}:
-        return parsed.path.lstrip("/") or None
-
-    # Normal watch URLs: https://www.youtube.com/watch?v=VIDEO_ID
-    qs = parse_qs(parsed.query)
-    if "v" in qs and qs["v"]:
-        return qs["v"][0]
-
+    # For now we just log the first part of the script so you know it ran.
+    preview = tts_script[:200].replace("\n", " ")
+    print("[leninware_pipeline] (stub) Would render Shotstack video with script:")
+    print(f"  “{preview}...”")
+    # Return None until you wire in real rendering
     return None
 
 
-def _published_to_datetime(entry) -> dt.datetime:
-    """Convert feedparser's published field into an aware datetime."""
-    # feedparser gives published_parsed as time.struct_time
-    if hasattr(entry, "published_parsed") and entry.published_parsed:
-        t = entry.published_parsed
-        return dt.datetime(
-            t.tm_year,
-            t.tm_mon,
-            t.tm_mday,
-            t.tm_hour,
-            t.tm_min,
-            t.tm_sec,
-            tzinfo=dt.timezone.utc,
-        )
-    # Fallback: now
-    return dt.datetime.now(dt.timezone.utc)
+# === YouTube upload hook (stub for now) ====================================
 
-
-# === Public API =============================================================
-
-def fetch_recent_from_feeds(max_per_feed: int = 10) -> List[Dict[str, Any]]:
+def upload_to_youtube_stub(
+    rendered_video_path_or_url: str,
+    title: str,
+    description: str = "",
+) -> Optional[str]:
     """
-    Pull recent videos from each configured RSS feed.
+    Placeholder for YouTube upload.
 
-    Returns a list of dicts:
-        {
-            "channel": str,
-            "title": str,
-            "url": str,
-            "video_id": str,
-            "published_at": datetime,
-        }
+    Important: an API key alone is NOT enough to upload videos. YouTube
+    uploads require an OAuth2 client and a refresh token for your channel.
+
+    This stub just logs what it would do.
+
+    Once you’re ready, you can:
+    - Run a one-time OAuth flow on your laptop to get a refresh token.
+    - Store that safely (e.g., Railway variable).
+    - Use google-api-python-client to perform uploads from the server.
+
+    Return:
+        The YouTube video id or URL, or None.
     """
-    items: List[Dict[str, Any]] = []
+    if not rendered_video_path_or_url:
+        print("[leninware_pipeline] No rendered video to upload; skipping.")
+        return None
 
-    for channel, feed_url in CHANNEL_FEEDS.items():
-        print(f"[youtube_ingest] Fetching feed for {channel}: {feed_url}")
-        feed = feedparser.parse(feed_url)
+    print("[leninware_pipeline] (stub) Would upload rendered video to YouTube:")
+    print(f"  Source: {rendered_video_path_or_url}")
+    print(f"  Title: {title}")
+    if description:
+        print(f"  Description: {description[:160]}...")
 
-        for entry in feed.entries[:max_per_feed]:
-            link = getattr(entry, "link", "")
-            video_id = getattr(entry, "yt_videoid", None) or _extract_video_id_from_url(
-                link
-            )
-
-            if not video_id:
-                print(f"[youtube_ingest] Could not extract video id for entry: {link}")
-                continue
-
-            items.append(
-                {
-                    "channel": channel,
-                    "title": getattr(entry, "title", "").strip(),
-                    "url": link,
-                    "video_id": video_id,
-                    "published_at": _published_to_datetime(entry),
-                }
-            )
-
-    print(f"[youtube_ingest] Collected {len(items)} recent videos from feeds.")
-    return items
-
-
-def enrich_with_stats(videos: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    For each video dict (must contain 'video_id'), attach basic statistics
-    from YouTube Data API.
-
-    Adds keys:
-        view_count, like_count, comment_count
-    """
-    if not videos:
-        return []
-
-    if not YOUTUBE_API_KEY:
-        print("[youtube_ingest] No YOUTUBE_API_KEY; returning videos without stats.")
-        # still return original list so the rest of the pipeline can run in a basic way
-        return videos
-
-    url = "https://www.googleapis.com/youtube/v3/videos"
-
-    # API supports up to 50 IDs per call; we'll keep it simple and do one by one.
-    for v in videos:
-        vid = v["video_id"]
-        params = {
-            "part": "statistics",
-            "id": vid,
-            "key": YOUTUBE_API_KEY,
-        }
-        try:
-            resp = requests.get(url, params=params, timeout=10)
-            resp.raise_for_status()
-            data = resp.json()
-            items = data.get("items", [])
-            if not items:
-                print(f"[youtube_ingest] No stats for {vid}")
-                continue
-
-            stats = items[0].get("statistics", {})
-            v["view_count"] = int(stats.get("viewCount", 0))
-            v["like_count"] = int(stats.get("likeCount", 0))
-            v["comment_count"] = int(stats.get("commentCount", 0))
-        except Exception as e:
-            print(f"[youtube_ingest] Error fetching stats for {vid}: {e}")
-
-    return videos
-
-
-def get_candidate_videos(max_per_feed: int = 10) -> List[Dict[str, Any]]:
-    """
-    Convenience: fetch from RSS feeds and enrich with stats in one call.
-    """
-    base = fetch_recent_from_feeds(max_per_feed=max_per_feed)
-    return enrich_with_stats(base)
-
-
-if __name__ == "__main__":
-    # quick manual test
-    vids = get_candidate_videos(max_per_feed=3)
-    for v in vids:
-        print(
-            f"{v['channel']} | {v['title']} | views={v.get('view_count')} "
-            f"likes={v.get('like_count')} comments={v.get('comment_count')}"
-        )
+    return None  # nothing actually uploaded yet
