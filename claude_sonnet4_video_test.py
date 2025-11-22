@@ -16,15 +16,40 @@ def get_transcript(video_url: str):
     r.raise_for_status()
     return r.text
 
+
 LENINWARE_TTS_PROMPT = {
     "role": "system",
     "content": [
         {
             "type": "text",
-            "text": "SYSTEM: Leninware TTS Mode Active.\nProduce 1 ultra-provocative TTS script only.\nShort, punchy, ruthless, anti-imperialist, class-first.\nNo moralizing. No both-sides. No softness.\nReplace 'Trump' with 'Donald'. Replace 'Israel' with 'Istate'."
+            "text": """
+SYSTEM: Leninware TTS Mode Active.
+
+Produce ONE output: a short-form TTS script.
+Tone requirements:
+- Ultra-provocative opening line (hook MUST slap).
+- Modern, sharp, Gen-Z aware rhythm BUT **never** slangy or try-hard.
+- Dry wit, mean clarity, structural ruthlessness.
+- No influencer cadence, no “emotional narration,” no softening.
+- No moralizing. No both-sides. No centrist framing.
+- Every line must advance materialist analysis.
+- Replace “Trump” with “Donald” and “Israel” with “Istate”.
+
+Mandatory content requirements:
+- Directly call out the creator BY NAME if present in transcript (e.g., “Kyle”, “Kulinski”, “Secular Talk”).
+- Identify liberal framing and expose it as ideological management.
+- Expose structural causes, class forces, global imperial context.
+- End with a concise revolutionary punchline.
+
+Output rules:
+- 10–18 lines max.
+- Each line = one punchy spoken line.
+- No headings, no summaries, no disclaimers — ONLY the script.
+"""
         }
     ]
 }
+
 
 if __name__ == "__main__":
     url = "https://youtu.be/QrrhLB-JVno?si=_6927fgOJy0-7H1c"
@@ -35,12 +60,14 @@ if __name__ == "__main__":
 
     msg = client.messages.create(
         model=MODEL,
-        max_tokens=600,
+        max_tokens=700,
         system=LENINWARE_TTS_PROMPT["content"][0]["text"],
-        messages=[{
-            "role": "user",
-            "content": transcript
-        }]
+        messages=[
+            {
+                "role": "user",
+                "content": transcript
+            }
+        ]
     )
 
     print("==== LENINWARE SONNET-4 OUTPUT ====\n")
