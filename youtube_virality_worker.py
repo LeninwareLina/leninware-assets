@@ -146,3 +146,24 @@ def run_worker():
 
         print(f"Sleeping 20 minutes… (Time: {datetime.utcnow()} UTC)\n")
         time.sleep(20 * 60)
+if __name__ == "__main__":
+    print("=== DRY TEST ===")
+    print("Fetching videos but NOT sending anything to Leninware…\n")
+
+    videos = get_candidate_videos()
+    print(f"Found {len(videos)} videos\n")
+
+    for vid in videos:
+        print(f"Title: {vid['title']}")
+        print(f"URL:   {vid['url']}")
+        print(f"Views: {vid['views']}")
+        print("---")
+
+    print("\nNow testing virality scoring on FIRST video only:\n")
+
+    if videos:
+        title = videos[0]['title']
+        views = videos[0]['views']
+        score, reason = score_virality(title, views)
+        print(f"Score: {score}")
+        print(f"Reason: {reason}")
