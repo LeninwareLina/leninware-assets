@@ -1,112 +1,142 @@
 # youtube_virality_worker.py
-import time
-import traceback
+"""
+Leninware YouTube Virality Worker
+
+Flow:
+1. Fetch recent videos from configured RSS feeds.
+2. Enrich with basic stats (views, likes, comments) via YouTube Data API.
+3. Compute a simple virality score using engagement + recency.
+4. Log all scores.
+5. For top-scoring videos:
+      - generate a Leninware TTS script via Claude Sonnet-4,
+      - (optionally) send to Shotstack,
+      - (optionally) upload result to YouTube.
+
+Shotstack + upload are currently stubs in leninware_video_pipeline.py.
+"""
+
+import math
+import datetime as dt
+from typing import List, Dict, Any
 
 from youtube_ingest import get_candidate_videos
-from leninware_video_pipeline import generate_leninware_tts_from_url
+from leninware_video_pipeline import (
+    generate_leninware_tts_from_url,
+    render_video_with_shotstack,
+    upload_to_youtube_stub,
+)
+
+# How “picky” the worker is
+VIRALITY_THRESHOLD = 2.0   # lower => more videos get picked
+MAX_VIDEOS_PER_RUN = 2     # don’t melt your API quota
 
 
-# === CONFIG ===
-VIRALITY_THRESHOLD = 2.2        # Score required for processing
-MAX_VIDEOS_TO_PROCESS = 3       # Hard limit per pass to prevent overload
-SLEEP_BETWEEN_TASKS = 2         # seconds
+# === Scoring ================================================================
 
-
-def score_virality(video):
+def compute_virality_score(video: Dict[str, Any]) -> float:
     """
-    Very lightweight heuristic scorer.
+    Heuristic, fully deterministic virality score.
 
-    You can expand this later, but this keeps it stable and predictable:
-    - title keywords
-    - creator/channel hint
-    - engagement stats if available
+    Inputs:
+        - view_count
+        - like_count
+        - comment_count
+        - age (in hours)
+
+    Intuition:
+        - more views = good
+        - more likes/comments = better
+        - newer video with same stats = much better
     """
-    title = video.get("title", "").lower()
+    views = int(video.get("view_count") or 0)
+    likes = int(video.get("like_count") or 0)
+    comments = int(video.get("comment_count") or 0)
 
-    score = 0.0
+    published_at = video.get("published_at")
+    if isinstance(published_at, dt.datetime):
+        now = dt.datetime.now(dt.timezone.utc)
+        age_hours = max((now - published_at).total_seconds() / 3600.0, 1.0)
+    else:
+        age_hours = 24.0  # shrug
 
-    # 🔥 Keywords that tend to go viral
-    hot_terms = [
-        "ai", "trump", "breaking", "exposed", "scandal",
-        "war", "fail", "secret", "leak", "interview",
-        "debate", "urgent", "files", "banned",
-        "epstein", "election", "collapse",
-    ]
-    for term in hot_terms:
-        if term in title:
-            score += 0.3
+    engagement = likes * 2 + comments * 3
+    velocity = (views + engagement * 10) / age_hours
 
-    # 🔥 Kyle Kulinski / Secular Talk
-    if "kulinski" in title or "secular" in title:
-        score += 0.8
-
-    # 🔥 Major news channels = higher amplification potential
-    news_channels = [
-        "cnn", "bbc", "msnbc", "nbc", "reuters",
-        "guardian", "vice", "al jazeera"
-    ]
-    channel = video.get("channel", "").lower()
-    for n in news_channels:
-        if n in channel:
-            score += 0.5
-
-    # 🔥 Long descriptive titles
-    if len(title) > 75:
-        score += 0.3
-
+    # log-scaled views + log-scaled velocity
+    score = 0.4 * math.log10(max(views, 1)) + 0.6 * math.log10(velocity + 1.0)
     return round(score, 2)
 
 
-def run_virality_pass():
-    print("=== Leninware YouTube Virality Pass ===")
+# === Worker ================================================================
 
-    try:
-        # STEP 1: fetch latest videos from your ingest module
-        candidates = get_candidate_videos()
-        if not candidates:
-            print("No videos returned.")
-            return
+def run_virality_pass() -> None:
+    print("=== Leninware YouTube Virality Worker ===")
 
-        print(f"Fetched {len(candidates)} videos.")
+    videos: List[Dict[str, Any]] = get_candidate_videos(max_per_feed=10)
+    if not videos:
+        print("No videos fetched from feeds.")
+        return
 
-        # STEP 2: score everything
-        scored = []
-        for vid in candidates:
-            s = score_virality(vid)
-            vid["score"] = s
-            scored.append(vid)
+    # Score all videos
+    for v in videos:
+        v["virality_score"] = compute_virality_score(v)
 
-            print(f"\nTitle: {vid.get('title')}")
-            print(f"URL:   {vid.get('url')}")
-            print(f"Score: {s}")
+    # Log them for you to inspect
+    for v in sorted(videos, key=lambda x: x["virality_score"], reverse=True):
+        title = v["title"]
+        chan = v["channel"]
+        url = v["url"]
+        vs = v.get("view_count", 0)
+        ls = v.get("like_count", 0)
+        cs = v.get("comment_count", 0)
+        score = v["virality_score"]
+        print(
+            f"Title: {title}\n"
+            f"Channel: {chan}\n"
+            f"URL: {url}\n"
+            f"Views: {vs} | Likes: {ls} | Comments: {cs}\n"
+            f"Score: {score}\n"
+        )
 
-        # STEP 3: choose top videos
-        scored.sort(key=lambda v: v["score"], reverse=True)
-        top = [v for v in scored if v["score"] >= VIRALITY_THRESHOLD]
+    # Pick winners
+    winners = [
+        v
+        for v in videos
+        if v["virality_score"] >= VIRALITY_THRESHOLD
+    ]
+    winners.sort(key=lambda x: x["virality_score"], reverse=True)
+    winners = winners[:MAX_VIDEOS_PER_RUN]
 
-        if not top:
-            print("\nNo videos crossed virality threshold.")
-            return
+    if not winners:
+        print(f"No videos crossed virality threshold ({VIRALITY_THRESHOLD}). "
+              f"Nothing sent to Leninware pipeline.")
+        return
 
-        # Limit processing
-        top = top[:MAX_VIDEOS_TO_PROCESS]
+    print(f"{len(winners)} videos crossed threshold; sending to Leninware pipeline.")
 
-        # STEP 4: process each video through Leninware pipeline
-        for vid in top:
-            print("\n=== Processing Video ===")
-            print(f"URL: {vid['url']}")
-            try:
-                output = generate_leninware_tts_from_url(vid["url"])
-                print("Pipeline output:")
-                print(output)
-            except Exception as e:
-                print(f"Error generating TTS for {vid['url']}")
-                traceback.print_exc()
+    for v in winners:
+        print("\n=== Processing candidate ===")
+        print(f"Channel: {v['channel']}")
+        print(f"Title:   {v['title']}")
+        print(f"URL:     {v['url']}")
+        print(f"Score:   {v['virality_score']}")
 
-            time.sleep(SLEEP_BETWEEN_TASKS)
+        # Step 1: generate Leninware TTS script
+        tts_script = generate_leninware_tts_from_url(v["url"])
 
-        print("\n=== Virality pass complete ===\n")
+        # Step 2: render video via Shotstack (stub for now)
+        rendered_url_or_path = render_video_with_shotstack(tts_script, v["title"])
 
-    except Exception as e:
-        print("Worker crashed:")
-        traceback.print_exc()
+        # Step 3: upload to YouTube (stub for now)
+        if rendered_url_or_path:
+            upload_to_youtube_stub(
+                rendered_video_path_or_url=rendered_url_or_path,
+                title=v["title"],
+                description=f"Auto-generated Leninware response to: {v['url']}",
+            )
+
+    print("\n=== Virality pass complete. ===")
+
+
+if __name__ == "__main__":
+    run_virality_pass()
