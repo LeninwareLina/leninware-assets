@@ -1,4 +1,7 @@
-aiogram==2.25.1
-anthropic>=0.33.0
-python-dotenv
 requests
+feedparser
+anthropic
+shotstack-sdk          # (for later, when you wire real Shotstack logic)
+google-api-python-client
+google-auth
+google-auth-oauthlib
