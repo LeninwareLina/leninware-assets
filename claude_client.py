@@ -2,9 +2,13 @@
 import os
 from anthropic import Anthropic
 
-MODEL_NAME = "claude-3-5-sonnet-latest"
+# Highest-tier Sonnet available
+MODEL_NAME = "claude-sonnet-4-20250514"
 
 def claude_ping():
+    """
+    Sends a tiny test message to Claude Sonnet 4 to verify the model works.
+    """
     api_key = os.getenv("CLAUDE_API_KEY")
     if not api_key:
         raise RuntimeError("CLAUDE_API_KEY missing")
