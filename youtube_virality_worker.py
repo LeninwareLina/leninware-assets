@@ -1,269 +1,148 @@
 # youtube_virality_worker.py
 #
-# Periodically:
-#  - pulls candidate videos from youtube_ingest
-#  - scores them with an ideology-aware virality engine
-#  - sends the best ones into the Leninware video pipeline
+# Leninware Viral Scanner:
+# Fetch candidate videos → LLM virality scoring → forward best video to pipeline.
 
-import math
-from datetime import datetime, timezone
+import os
+import time
+from datetime import datetime
+import traceback
 
-import youtube_ingest  # uses your existing ingest module
+import anthropic
+from youtube_ingest import get_candidate_videos
 from leninware_video_pipeline import generate_leninware_tts_from_url
 
-# -----------------------------
-# Config
-# -----------------------------
 
-# How many top videos to actually send to Leninware on each run
-MAX_VIDEOS_PER_RUN = 3
+# Load API key
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-# Minimum score required to be considered “viral enough”
-VIRALITY_THRESHOLD = 2.2
+MODEL = "claude-sonnet-4-20250514"
 
 
-# -----------------------------
-# Helpers
-# -----------------------------
+############################################################
+# VIRALITY PROMPT — tuned for “we want stuff Leninware can wreck”
+############################################################
 
-def _parse_iso_datetime(dt_str: str | None) -> datetime | None:
-    if not dt_str:
-        return None
+VIRALITY_PROMPT = """
+You are the Leninware Virality Engine.
+
+Score the following YouTube video for *viral potential* based on these factors:
+- High emotional charge (rage, scandal, shock, hypocrisy)
+- Clear political narrative
+- Culture war triggers
+- Strong personalities (creators, politicians, pundits)
+- Clip-worthy punchlines or meltdown moments
+- Timeliness (recent news, fresh conflict)
+- Clear ideological tension
+
+Score from 0.0 to 5.0:
+- 0–1: Dead content
+- 1–2: Mildly interesting
+- 2–3: Trending potential
+- 3–4: Reliable viral spark
+- 4–5: Highly explosive, perfect for Leninware commentary
+
+Return only this JSON structure:
+{
+  "score": <float>,
+  "reason": "<short explanation>"
+}
+"""
+
+############################################################
+# Ask Sonnet-4 to score virality
+############################################################
+
+def score_virality(title, views):
     try:
-        # Handles ISO like "2025-11-22T14:03:15Z"
-        return datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-    except Exception:
-        return None
+        msg = client.messages.create(
+            model=MODEL,
+            max_tokens=300,
+            system=VIRALITY_PROMPT,
+            messages=[{
+                "role": "user",
+                "content": f"Title: {title}\nViews: {views}"
+            }]
+        )
+
+        text = msg.content[0].text.strip()
+
+        # Try to parse JSON safely
+        import json
+        data = json.loads(text)
+        return float(data["score"]), data["reason"]
+
+    except Exception as e:
+        print(f"Failed to score virality: {e}")
+        print("Raw response:", text)
+        return 0.0, "Error parsing response"
 
 
-def _safe_num(value, default=0):
-    try:
-        if value is None:
-            return default
-        return float(value)
-    except Exception:
-        return default
+############################################################
+# MAIN WORKER LOOP
+############################################################
 
-
-# -----------------------------
-# Virality / Ideology Scoring
-# -----------------------------
-
-def compute_leninware_virality_score(video: dict) -> float:
-    """
-    Ideology-aware virality score.
-
-    Expects a dict with (when available):
-      title, description, url, channel_title, tags,
-      view_count, like_count, comment_count, published_at
-    Any missing fields are safely treated as 0 / "".
-    """
-    title = (video.get("title") or "").strip()
-    description = (video.get("description") or "").strip()
-    channel = (video.get("channel_title") or "").strip()
-    tags = video.get("tags") or []
-
-    full_text = " ".join([title, description, " ".join(tags)]).lower()
-    channel_lower = channel.lower()
-
-    views = _safe_num(video.get("view_count"))
-    likes = _safe_num(video.get("like_count"))
-    comments = _safe_num(video.get("comment_count"))
-
-    # --- Popularity / velocity ---
-
-    published_at = _parse_iso_datetime(video.get("published_at"))
-    if published_at is None:
-        age_hours = 48.0  # assume older if we can't parse
-    else:
-        delta = datetime.now(timezone.utc) - published_at
-        age_hours = max(delta.total_seconds() / 3600.0, 1.0)
-
-    # View velocity: views per hour, squashed + log scaled
-    views_per_hour = views / age_hours
-    # Roughly:
-    #  0  -> 0
-    #  100/h  -> ~1.3
-    #  1k/h   -> ~2.0
-    #  10k/h  -> ~2.6–3.0
-    popularity_score = math.log10(views_per_hour + 10) - 1
-    popularity_score = max(0.0, min(popularity_score, 3.0))
-
-    # Engagement: likes + comments relative to views
-    if views <= 0:
-        engagement_rate = 0.0
-    else:
-        engagement_rate = ((likes * 2.0) + (comments * 3.0)) / views
-        # Clamp to sane [0, 0.1] range then scale
-        engagement_rate = max(0.0, min(engagement_rate, 0.1))
-    engagement_score = engagement_rate * 20.0  # 0–2.0 approx
-
-    # --- Ideology / content type bonuses ---
-
-    ideology_bonus = 0.0
-
-    # Explicit fascism / empire / genocide / class conflict
-    ideology_keywords_strong = [
-        "fascist", "fascism", "nazis", "neo-nazi", "white nationalist",
-        "genocide", "ethnic cleansing",
-        "gaza", "palestine", "i state", "israel", "west bank",
-        "coup", "junta", "authoritarian",
-        "strike", "union", "labor union", "workers", "scab",
-        "billionaire", "oligarch",
-        "police shooting", "police violence", "riot police",
-    ]
-    if any(k in full_text for k in ideology_keywords_strong):
-        ideology_bonus += 1.0
-
-    # Mainstream bourgeois politics / imperial management
-    ideology_keywords_medium = [
-        "trump", "donald", "biden", "kamala", "netanyahu",
-        "supreme court", "congress", "senate", "parliament",
-        "republicans", "democrats", "tories", "labour", "labour party",
-        "election", "vote", "campaign",
-        "ukraine", "nato", "russia", "china", "iran",
-        "sanctions", "military aid",
-    ]
-    if any(k in full_text for k in ideology_keywords_medium):
-        ideology_bonus += 0.8
-
-    # Corruption / scandal / leaks / big money
-    ideology_keywords_soft = [
-        "corruption", "bribery", "dark money", "lobbyist",
-        "offshore", "tax haven", "money laundering",
-        "oil company", "defense contractor",
-        "arms deal", "spyware", "surveillance",
-    ]
-    if any(k in full_text for k in ideology_keywords_soft):
-        ideology_bonus += 0.5
-
-    # --- Channel category bonuses ---
-
-    # Liberal / centrist news we want to drag
-    liberal_news_channels = [
-        "cnn", "msnbc", "nbc news", "abc news", "cbs news",
-        "bbc", "bbc news", "sky news",
-        "meidas", "meidastouch",
-    ]
-    if any(name in channel_lower for name in liberal_news_channels):
-        ideology_bonus += 0.7
-
-    # Progressive commentary / podcast circles
-    lefty_channels = [
-        "secular talk", "kyle kulinski", "the majority report",
-        "majority report", "tyt", "the young turks",
-        "hassanabi", "hassan abbi", "chapotraphouse", "chapo",
-    ]
-    if any(name in channel_lower for name in lefty_channels):
-        ideology_bonus += 0.9
-
-    # --- Drama / “this will trend” language ---
-
-    drama_keywords = [
-        "exposed", "debunked", "meltdown", "rage", "loses it",
-        "destroyed", "roasted", "obliterated", "called out",
-        "goes off", "claps back", "freakout", "rants",
-        "bombshell", "shocking", "secret recording",
-    ]
-    if any(k in full_text for k in drama_keywords):
-        ideology_bonus += 0.6
-
-    # --- Final weighted score ---
-
-    score = 0.0
-    score += popularity_score * 0.8      # up to ~2.4
-    score += engagement_score * 0.6      # up to ~1.2
-    score += ideology_bonus              # 0–~3 depending on content
-
-    return round(score, 2)
-
-
-# -----------------------------
-# Candidate retrieval
-# -----------------------------
-
-def get_candidate_videos() -> list[dict]:
-    """
-    Thin wrapper so we don't care which function name youtube_ingest uses.
-    It just has to return a list[dict] of videos.
-    """
-    # Try common function names in order
-    if hasattr(youtube_ingest, "get_candidate_videos"):
-        return youtube_ingest.get_candidate_videos()
-    if hasattr(youtube_ingest, "fetch_recent_videos"):
-        return youtube_ingest.fetch_recent_videos()
-    if hasattr(youtube_ingest, "get_recent_videos"):
-        return youtube_ingest.get_recent_videos()
-
-    raise RuntimeError(
-        "youtube_ingest module is missing a video-fetch function. "
-        "Expected one of: get_candidate_videos, fetch_recent_videos, get_recent_videos."
-    )
-
-
-# -----------------------------
-# Main worker
-# -----------------------------
-
-def main():
+def run_worker():
     print("=== Leninware YouTube Virality Worker ===")
 
-    try:
-        videos = get_candidate_videos()
-    except Exception as e:
-        print(f"Error fetching videos from youtube_ingest: {e}")
-        return
-
-    if not videos:
-        print("No candidate videos returned.")
-        return
-
-    scored = []
-    for video in videos:
-        score = compute_leninware_virality_score(video)
-
-        title = (video.get("title") or "").strip()
-        url = video.get("url") or video.get("video_url") or "UNKNOWN_URL"
-
-        print(f"\nTitle: {title}")
-        print(f"URL:   {url}")
-        print(f"Score: {score}")
-
-        scored.append((score, video))
-
-    # Sort best first
-    scored.sort(key=lambda x: x[0], reverse=True)
-
-    # Filter by threshold
-    eligible = [v for (s, v) in scored if s >= VIRALITY_THRESHOLD]
-
-    if not eligible:
-        print("\nNo videos crossed virality threshold "
-              f"({VIRALITY_THRESHOLD}). Nothing sent to Leninware this run.")
-        return
-
-    print(f"\n{len(eligible)} videos passed threshold {VIRALITY_THRESHOLD}.")
-    to_process = eligible[:MAX_VIDEOS_PER_RUN]
-
-    for idx, video in enumerate(to_process, start=1):
-        title = (video.get("title") or "").strip()
-        url = video.get("url") or video.get("video_url")
-        if not url:
-            print(f"[{idx}] Skipping video with no URL: {title}")
+    while True:
+        print("\n=== Fetching candidates ===")
+        try:
+            videos = get_candidate_videos()
+        except Exception as e:
+            print("Error fetching videos from youtube_ingest:")
+            traceback.print_exc()
+            time.sleep(60)
             continue
 
-        print(f"\n[{idx}] Generating Leninware TTS for:")
-        print(f"Title: {title}")
-        print(f"URL:   {url}")
+        best_video = None
+        best_score = -1
 
-        try:
-            tts_text = generate_leninware_tts_from_url(url)
-            print("\n--- Leninware TTS ---")
-            print(tts_text)
-            print("---------------------\n")
-        except Exception as e:
-            print(f"Error running Leninware pipeline for {url}: {e}")
+        print(f"Got {len(videos)} candidates\n")
 
+        for vid in videos:
+            title = vid["title"]
+            url = vid["url"]
+            views = vid["views"] or 0
 
-if __name__ == "__main__":
-    main()
+            print(f"Title: {title}")
+            print(f"URL:   {url}")
+            print(f"Views: {views}")
+
+            score, reason = score_virality(title, views)
+
+            print(f"Score: {score:.2f}")
+            print(f"Reason: {reason}\n")
+
+            if score > best_score:
+                best_score = score
+                best_video = vid
+
+        if best_video is None:
+            print("No videos found at all — strange. Sleeping.")
+            time.sleep(60)
+            continue
+
+        # THRESHOLD
+        THRESHOLD = 2.2
+
+        print("\n=== BEST CANDIDATE ===")
+        print(best_video["title"])
+        print(best_video["url"])
+        print(f"Score: {best_score:.2f}")
+
+        if best_score >= THRESHOLD:
+            print("\n>>> VIRAL ENOUGH. Sending to Leninware TTS engine…\n")
+
+            try:
+                generate_leninware_tts_from_url(best_video["url"])
+                print(">>> Leninware TTS pipeline completed.\n")
+            except Exception as e:
+                print("Error running TTS pipeline:")
+                traceback.print_exc()
+        else:
+            print("\nNot viral enough. Nothing sent to Leninware this cycle.\n")
+
+        print(f"Sleeping 20 minutes… (Time: {datetime.utcnow()} UTC)\n")
+        time.sleep(20 * 60)
