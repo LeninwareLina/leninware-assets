@@ -1,26 +1,34 @@
 # claude_client.py
-import os
-from anthropic import Anthropic
+import asyncio
+from anthropic import AsyncAnthropic
 
-# Highest-tier Sonnet available
-MODEL_NAME = "claude-sonnet-4-20250514"
+# Keep your full Leninware system prompt exactly as it already is
+from leninware_system_prompt import LENINWARE_SYSTEM_PROMPT
 
-def claude_ping():
-    """
-    Sends a tiny test message to Claude Sonnet 4 to verify the model works.
-    """
-    api_key = os.getenv("CLAUDE_API_KEY")
-    if not api_key:
-        raise RuntimeError("CLAUDE_API_KEY missing")
 
-    client = Anthropic(api_key=api_key)
+async def run_claude(transcript: str, api_key: str) -> str:
+    client = AsyncAnthropic(api_key=api_key)
 
-    response = client.messages.create(
-        model=MODEL_NAME,
-        max_tokens=20,
+    user_prompt = f"""
+Apply Leninware Mode to this transcript and generate:
+TITLE
+DESCRIPTION
+TTS_SCRIPT
+
+Transcript:
+{transcript}
+"""
+
+    response = await client.messages.create(
+        model="claude-sonnet-4-20250514",   # <<<<<< EXACT MODEL ID YOU WANT TO TRY
+        max_tokens=1800,
+        system=LENINWARE_SYSTEM_PROMPT,
         messages=[
-            {"role": "user", "content": "Reply with: PONG"}
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": user_prompt}]
+            }
         ]
     )
 
-    return response.content[0].text.strip()
+    return response.content[0].text
