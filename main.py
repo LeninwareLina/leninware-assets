@@ -1,33 +1,54 @@
 # main.py
 import os
-from telegram.ext import ApplicationBuilder, CommandHandler
-from claude_client import claude_ping
+import logging
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
+from telegram_handlers import handle_youtube
 
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+# Logging
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
+logger = logging.getLogger(__name__)
 
-async def start(update, context):
+# Telegram token
+BOT_TOKEN = os.getenv("TELEGRAM_API_KEY") or os.getenv("TELEGRAM_BOT_TOKEN")
+
+
+async def start(update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Leninware online.\n"
-        "Use /claude_ping to test Claude connectivity."
+        "Leninware online.\nSend a YouTube link to begin."
     )
 
-async def test_claude(update, context):
-    try:
-        result = claude_ping()
-        await update.message.reply_text(f"Claude says: {result}")
-    except Exception as e:
-        await update.message.reply_text(f"Claude error: {e}")
+
+async def ping(update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Pong ✊")
+
 
 def main():
     if not BOT_TOKEN:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN missing")
+        raise RuntimeError("Missing TELEGRAM_API_KEY")
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
+    # Commands
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("claude_ping", test_claude))
+    app.add_handler(CommandHandler("ping", ping))
 
+    # Automatically detect YouTube URLs in ANY message
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_youtube)
+    )
+
+    logger.info("Leninware bot starting…")
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
