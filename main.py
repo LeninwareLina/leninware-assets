@@ -6,7 +6,10 @@ from claude_client import claude_ping
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 async def start(update, context):
-    await update.message.reply_text("Bot online. Use /claude_ping")
+    await update.message.reply_text(
+        "Leninware online.\n"
+        "Use /claude_ping to test Claude connectivity."
+    )
 
 async def test_claude(update, context):
     try:
