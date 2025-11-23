@@ -1,94 +1,87 @@
 # youtube_ingest.py
-"""
-Fetches candidate videos from YouTube channels using the YouTube Data API.
 
-Returns a list of dicts:
-{
-    "title": str,
-    "url": str,
-    "channel": str,
-    "published_at": datetime,
-    "view_count": int,
-    "like_count": int,
-    "comment_count": int
-}
-"""
-
-import os
 import datetime as dt
-import requests
 from typing import List, Dict, Any
 
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+import requests
 
-# Add whatever channels you want here
+from config import YOUTUBE_API_KEY, require_env
+
+YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
+
+
+# You can adjust these to your chosen channels
 CHANNEL_IDS = [
-    "UC1yBKRuGpC1tSM73A0ZjYjQ",  # Secular Talk
-    "UCJtKw3hNUnj_lQj7A5zE2fw",  # Majority Report
-    "UCUpMJwMqE9a-YA_aO0RM8Kw",  # MeidasTouch
-    "UC16niRr50-MSBwiO3YDb3RA",  # BBC News
+    # "UC..."  # MeidasTouch
+    # "UC..."  # Secular Talk
+    # etc...
 ]
 
 
-def yt_get(endpoint: str, params: dict) -> dict:
-    base = "https://www.googleapis.com/youtube/v3/"
-    params["key"] = YOUTUBE_API_KEY
-    r = requests.get(base + endpoint, params=params, timeout=15)
-    r.raise_for_status()
-    return r.json()
+def _iso_to_dt(s: str) -> dt.datetime:
+    return dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
 
 
-def get_uploads_playlist(channel_id: str) -> str:
-    data = yt_get("channels", {"part": "contentDetails", "id": channel_id})
-    return data["items"][0]["contentDetails"]["relatedPlaylists"]["uploads"]
+def get_candidate_videos(max_per_feed: int = 5) -> List[Dict[str, Any]]:
+    """
+    Fetch a small list of recent videos from configured channel IDs.
+    Returns a list of dicts with url, title, channel, stats, etc.
+    """
+    require_env("YOUTUBE_API_KEY", YOUTUBE_API_KEY)
+    if not CHANNEL_IDS:
+        print("[youtube_ingest] No CHANNEL_IDS configured, returning empty list.")
+        return []
 
+    videos: List[Dict[str, Any]] = []
 
-def get_playlist_items(playlist_id: str, max_items=10) -> List[Dict[str, Any]]:
-    data = yt_get(
-        "playlistItems",
-        {"part": "snippet,contentDetails", "playlistId": playlist_id, "maxResults": max_items},
-    )
-    return data["items"]
+    for channel_id in CHANNEL_IDS:
+        # 1) search for recent videos
+        search_params = {
+            "part": "snippet",
+            "channelId": channel_id,
+            "order": "date",
+            "type": "video",
+            "maxResults": max_per_feed,
+            "key": YOUTUBE_API_KEY,
+        }
+        s_resp = requests.get(f"{YOUTUBE_API_BASE}/search", params=search_params, timeout=20)
+        if s_resp.status_code != 200:
+            print(f"[youtube_ingest] search error {s_resp.status_code}: {s_resp.text[:200]}")
+            continue
 
+        search_data = s_resp.json()
+        video_ids = [item["id"]["videoId"] for item in search_data.get("items", [])]
+        if not video_ids:
+            continue
 
-def get_video_stats(video_id: str) -> Dict[str, int]:
-    data = yt_get("videos", {"part": "statistics", "id": video_id})
-    stats = data["items"][0]["statistics"]
-    return {
-        "view_count": int(stats.get("viewCount", 0)),
-        "like_count": int(stats.get("likeCount", 0)),
-        "comment_count": int(stats.get("commentCount", 0)),
-    }
+        # 2) get stats
+        stats_params = {
+            "part": "statistics,snippet",
+            "id": ",".join(video_ids),
+            "key": YOUTUBE_API_KEY,
+        }
+        v_resp = requests.get(f"{YOUTUBE_API_BASE}/videos", params=stats_params, timeout=20)
+        if v_resp.status_code != 200:
+            print(f"[youtube_ingest] videos error {v_resp.status_code}: {v_resp.text[:200]}")
+            continue
 
+        v_data = v_resp.json()
+        for item in v_data.get("items", []):
+            vid = item["id"]
+            snippet = item["snippet"]
+            stats = item.get("statistics", {})
 
-def get_candidate_videos(max_per_feed=10) -> List[Dict[str, Any]]:
-    results: List[Dict[str, Any]] = []
+            videos.append(
+                {
+                    "video_id": vid,
+                    "url": f"https://www.youtube.com/watch?v={vid}",
+                    "title": snippet.get("title", ""),
+                    "channel": snippet.get("channelTitle", ""),
+                    "published_at": _iso_to_dt(snippet.get("publishedAt", dt.datetime.now(dt.timezone.utc).isoformat())),
+                    "view_count": int(stats.get("viewCount", 0)),
+                    "like_count": int(stats.get("likeCount", 0)),
+                    "comment_count": int(stats.get("commentCount", 0)),
+                }
+            )
 
-    for cid in CHANNEL_IDS:
-        try:
-            uploads = get_uploads_playlist(cid)
-            items = get_playlist_items(uploads, max_per_feed)
-
-            for item in items:
-                vid = item["contentDetails"]["videoId"]
-                snippet = item["snippet"]
-
-                stats = get_video_stats(vid)
-
-                published = dt.datetime.fromisoformat(
-                    snippet["publishedAt"].replace("Z", "+00:00")
-                )
-
-                results.append(
-                    {
-                        "title": snippet["title"],
-                        "url": f"https://www.youtube.com/watch?v={vid}",
-                        "channel": snippet["channelTitle"],
-                        "published_at": published,
-                        **stats,
-                    }
-                )
-        except Exception as e:
-            print(f"[ingest] Error fetching channel {cid}: {e}")
-
-    return results
+    return videos
