@@ -1,7 +1,3 @@
+openai
 requests
-feedparser
-anthropic
-shotstack-sdk          # (for later, when you wire real Shotstack logic)
-google-api-python-client
-google-auth
-google-auth-oauthlib
+python-dotenv
