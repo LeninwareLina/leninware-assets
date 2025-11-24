@@ -1,0 +1,6 @@
+SYSTEM MODE: LENINWARE (ACTIVE)
+
+[PASTE YOUR FULL LENINWARE SYSTEM PROMPT HERE]
+
+Remember: the code treats the model output as a single commentary blob.
+You control the structure, tone, and ending line (e.g. “Real comrades like and subscribe.”)
