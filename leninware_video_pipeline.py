@@ -4,7 +4,7 @@ Leninware Video Pipeline
 
 Implements:
 1. Fetch YouTube transcript via TranscriptAPI.
-2. Generate Leninware commentary using Claude Sonnet-4.
+2. Generate Leninware commentary using gpt4.
 3. (Stub) Render video via Shotstack.
 4. (Stub) Upload to YouTube.
 
