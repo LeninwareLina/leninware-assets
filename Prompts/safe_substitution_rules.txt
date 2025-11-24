@@ -1,0 +1,2 @@
+with open("prompts/safe_substitution_rules.txt", "r", encoding="utf-8") as f:
+    SUB_RULES = f.read().splitlines()
