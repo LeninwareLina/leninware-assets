@@ -16,29 +16,16 @@ CHANNEL_IDS = [
     # === Liberal/Progressive Commentary ===
     "UC9r9HYFxEQOBXSopFS61ZWg",  # MeidasTouch
     "UCvixJtaXuBC8RQfF_vhWEfg",  # David Pakman (Pakman Clips)
-    "UCQOyMcZS3wKZWz_UtTd4smw",  # Breaking Points
     "UCNysHmvn8TME2jQu57j66_A",  # More Perfect Union
     "UCPWXiRWZ29zrxPFIQT7eHSA",  # Brian Tyler Cohen
     
     # === Conservative/Culture War ===
-    "UCnQC_G5Xs_F4FGUnC_QDUVw",  # Ben Shapiro
     "UCL_f53ZEJxp8TtlOkHwMV9Q",  # Jordan Peterson  
     "UCIeLsbFRTTg_BdPgmNp4lNg",  # Tim Pool (Timcast)
     
     # === Leftist Commentary ===
     "UC554eY5jNUfDq3yDOJYirOQ",  # HasanAbi
     "UCyUo8SJqSdF_PSz5B_HBKNQ",  # H3H3 (h3h3Productions)
-    "UC1E-JS8L0j1Ei70D9VEFrPQ",  # Philosophy Tube
-    "UCJ6o36XL0CpYEgDxD6ZWUdw",  # Shaun
-    "UCSkzHxIcfoEr69MWBdo0ppg",  # Big Joel
-    
-    # === Add more as you find their IDs ===
-    # "UCxxxxxx",  # SecularTalk (Kyle Kulinski)
-    # "UCxxxxxx",  # Destiny
-    # "UCxxxxxx",  # Beau of the Fifth Column
-    # "UCxxxxxx",  # FD Signifier
-]
-
 
 def _iso_to_dt(s: str) -> dt.datetime:
     """Helper to parse ISO datetime string"""
