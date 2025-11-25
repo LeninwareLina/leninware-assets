@@ -1,34 +1,36 @@
-# transcript_fetcher.py
+# ---------------------------------------------------------------------------
+# transcript_fetcher.py (rewritten)
+# ---------------------------------------------------------------------------
+
 import requests
-from config import TRANSCRIPT_API_KEY, require_env
 
-TRANSCRIPT_ENDPOINT = "https://transcriptapi.com/api/v2/youtube/transcript"
+TRANSCRIPT_ENDPOINT = "https://api.transcriptapi.com/v1/fetch"  # example placeholder
 
 
-def fetch_transcript(video_url: str) -> str:
+def fetch_transcript(video_id: str) -> str:
     """
-    Fetches a plain-text transcript using TranscriptAPI.
-
-    Raises RuntimeError on failure.
+    Fetch transcript cleanly.
+    Raises clean errors and prevents bad data from contaminating model context.
     """
-    require_env("TRANSCRIPT_API_KEY", TRANSCRIPT_API_KEY)
 
-    params = {
-        "video_url": video_url,
-        "format": "text",
-    }
-    headers = {
-        "Authorization": f"Bearer {TRANSCRIPT_API_KEY}"
-    }
+    if not video_id:
+        raise ValueError("No YouTube video_id provided.")
 
-    resp = requests.get(TRANSCRIPT_ENDPOINT, params=params, headers=headers, timeout=30)
-    if resp.status_code != 200:
-        raise RuntimeError(
-            f"TranscriptAPI error {resp.status_code}: {resp.text}"
-        )
+    try:
+        r = requests.get(TRANSCRIPT_ENDPOINT, params={"id": video_id}, timeout=20)
+        r.raise_for_status()
+    except Exception as e:
+        raise RuntimeError(f"TranscriptAPI request failed: {e}")
 
-    text = resp.text.strip()
+    data = r.json()
+
+    # Defensive validation
+    if not data or "transcript" not in data:
+        raise RuntimeError("TranscriptAPI returned invalid response structure.")
+
+    text = data.get("transcript", "").strip()
+
     if not text:
-        raise RuntimeError("TranscriptAPI returned empty transcript")
+        raise RuntimeError("TranscriptAPI returned empty transcript.")
 
     return text
