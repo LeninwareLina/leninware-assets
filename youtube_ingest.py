@@ -25,8 +25,8 @@ CHANNEL_IDS = [
     
     # === Leftist Commentary ===
     "UC554eY5jNUfDq3yDOJYirOQ",  # HasanAbi
-    "UCyUo8SJqSdF_PSz5B_HBKNQ",  # H3H3 (h3h3Productions)
-]
+    "UCyUo8SJqSdF_PSz5B_HBKNQ",  # H3H3 (h3h3Productions)]
+
 def _iso_to_dt(s: str) -> dt.datetime:
     """Helper to parse ISO datetime string"""
     return dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
