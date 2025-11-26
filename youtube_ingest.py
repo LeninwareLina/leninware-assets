@@ -2,12 +2,11 @@
 
 from typing import List, Dict, Any
 import requests
-import datetime as dt
 
-from config import YOUTUBE_API_KEY, require_env
+from config import require_env, YOUTUBE_API_BASE
 
 
-# Channels to ingest (restored from your original repo)
+# Channels to ingest (restored + your channel)
 CHANNEL_IDS = [
     "UCXIJgqnII2ZOINSWNOGFThA",  # Fox News
     "UC3XTzVzaHQEd30rQbuvCtTQ",  # MSNBC
@@ -18,20 +17,19 @@ CHANNEL_IDS = [
     "UCb8Rde3uRL0JLZ8ZzE1zE7w",  # TYT
     "UCSm7JPn2xvLCGq53_wXA0Hg",  # Secular Talk
 
-    # Your channel, for debugging or self-reflection
+    # Your channel for debugging/self-analysis
     "UCtxBVxXhuIjsxajIgUi01pg",  # LeninwareAI
 ]
 
-
-SEARCH_API = "https://www.googleapis.com/youtube/v3/search"
-VIDEOS_API = "https://www.googleapis.com/youtube/v3/videos"
+SEARCH_API = f"{YOUTUBE_API_BASE}/search"
+VIDEOS_API = f"{YOUTUBE_API_BASE}/videos"
 
 
 def get_candidate_videos() -> List[Dict[str, Any]]:
     """
-    Fetches the latest videos from each configured YouTube channel ID.
+    Fetch the latest videos from each configured YouTube channel ID.
 
-    Returns a list of:
+    Returns a list of dicts:
         {
             "url": str,
             "title": str,
@@ -41,15 +39,14 @@ def get_candidate_videos() -> List[Dict[str, Any]]:
             "comments": int,
         }
     """
-    api_key = require_env("YOUTUBE_API_KEY", YOUTUBE_API_KEY)
+    api_key = require_env("YOUTUBE_API_KEY")
 
     candidates: List[Dict[str, Any]] = []
-
     print("[ingest] Fetching videos from configured channels...")
 
     for cid in CHANNEL_IDS:
         try:
-            # Fetch most recent uploads
+            # Most recent uploads by date
             search_resp = requests.get(
                 SEARCH_API,
                 params={
@@ -69,7 +66,7 @@ def get_candidate_videos() -> List[Dict[str, Any]]:
                 video_id = item["id"]["videoId"]
                 snippet = item["snippet"]
 
-                # Fetch stats
+                # Fetch stats for each video
                 stats_resp = requests.get(
                     VIDEOS_API,
                     params={
