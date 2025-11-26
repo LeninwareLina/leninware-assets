@@ -1,48 +1,72 @@
-# shotstack_renderer.py
+import time
 import requests
-import json
-
-from config import SHOTSTACK_API_KEY, SHOTSTACK_BASE_URL, require_env
+from config import require_env, SHOTSTACK_API_URL
 
 
-def render_video_with_shotstack(video_assets: dict) -> str:
+def render_video_with_shotstack(audio_file: str, output_video_path: str) -> str:
     """
-    Sends a render request to Shotstack.
-
-    Args:
-        video_assets: dict containing video, audio, and overlays.
-
-    Returns:
-        The Shotstack render URL (string).
-
-    Raises:
-        RuntimeError if the API call fails.
+    Render a simple video using Shotstack Edit API.
+    Returns path to rendered MP4 file.
     """
 
-    api_key = SHOTSTACK_API_KEY
-    url = SHOTSTACK_BASE_URL
+    api_key = require_env("SHOTSTACK_API_KEY")
+
+    # Basic template: black background + audio track
+    payload = {
+        "timeline": {
+            "soundtrack": {
+                "src": f"data:audio/wav;base64,{_encode_file(audio_file)}",
+                "effect": "fadeIn"
+            },
+            "background": "#000000",
+            "tracks": []
+        },
+        "output": {
+            "format": "mp4",
+            "resolution": "1080"
+        }
+    }
 
     headers = {
         "x-api-key": api_key,
         "Content-Type": "application/json"
     }
 
-    try:
-        resp = requests.post(url, headers=headers, data=json.dumps(video_assets), timeout=30)
-    except Exception as e:
-        raise RuntimeError(f"Shotstack request error: {e}")
+    # Submit the render request
+    resp = requests.post(
+        SHOTSTACK_API_URL,
+        json=payload,
+        headers=headers,
+        timeout=20
+    )
+    resp.raise_for_status()
 
-    if resp.status_code not in (200, 201):
-        raise RuntimeError(
-            f"Shotstack error {resp.status_code}: {resp.text}"
-        )
+    render_id = resp.json()["response"]["id"]
 
-    data = resp.json()
+    # Poll until the video is finished
+    status_url = f"{SHOTSTACK_API_URL}/{render_id}"
+    while True:
+        status = requests.get(status_url, headers=headers).json()
+        state = status["response"]["status"]
 
-    # Extract render URL
-    try:
-        render_url = data["response"]["url"]
-    except Exception:
-        raise RuntimeError(f"Unexpected Shotstack response: {data}")
+        if state == "done":
+            url = status["response"]["url"]
+            break
+        elif state in ("failed", "errored"):
+            raise RuntimeError(f"Shotstack render failed: {status}")
 
-    return render_url
+        time.sleep(3)
+
+    # Download rendered MP4
+    video_bytes = requests.get(url).content
+    with open(output_video_path, "wb") as f:
+        f.write(video_bytes)
+
+    return output_video_path
+
+
+def _encode_file(path: str) -> str:
+    """Base64 encode a file for Shotstack upload."""
+    import base64
+    with open(path, "rb") as f:
+        return base64.b64encode(f.read()).decode("utf-8")
