@@ -3,7 +3,7 @@
 from pathlib import Path
 from openai import OpenAI
 
-from config import OPENAI_API_KEY, require_env
+from config import require_env
 
 PROMPT_PATH = Path("prompts/leninware_raw.txt")
 
@@ -24,16 +24,15 @@ def generate_leninware_commentary(transcript: str) -> str:
     """
     Send transcript to GPT-4.x using the Leninware system prompt.
 
-    This is hardened against:
+    Hardened against:
     - empty transcripts
-    - log / error contamination
+    - logs / errors polluting context
     """
     if not transcript or transcript.strip() == "":
         return "NO TRANSCRIPT PROVIDED."
 
-    api_key = require_env("OPENAI_API_KEY", OPENAI_API_KEY)
+    api_key = require_env("OPENAI_API_KEY")
     client = OpenAI(api_key=api_key)
-
     system_prompt = load_leninware_system_prompt()
 
     user_content = (
@@ -47,7 +46,7 @@ def generate_leninware_commentary(transcript: str) -> str:
     )
 
     resp = client.chat.completions.create(
-        model="gpt-4.1",   # adjust if you change models
+        model="gpt-4.1",  # adjust if you switch models
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
