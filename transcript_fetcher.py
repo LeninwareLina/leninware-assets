@@ -34,3 +34,5 @@ def fetch_transcript(video_id: str) -> str:
         raise RuntimeError("TranscriptAPI returned empty transcript.")
 
     return text
+transcript = fetch_transcript(v["url"])
+print(f"[worker] Transcript length: {len(transcript)} chars")
