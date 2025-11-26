@@ -1,98 +1,49 @@
-# youtube_ingest.py
-
-from typing import List, Dict, Any
 import requests
+from config import YOUTUBE_API_KEY
 
-from config import require_env, YOUTUBE_API_BASE
-
-# Channels to ingest (restored + your channel)
-CHANNEL_IDS = [
+# Channels Leninware originally pulled from.
+# These were in the old repo.
+CHANNELS = [
     "UCXIJgqnII2ZOINSWNOGFThA",  # Fox News
-    "UC3XTzVzaHQEd30rQbuvCtTQ",  # MSNBC
-    "UCY8p5PCLuLhqZ4Lf37jHwoA",  # MeidasTouch
-    "UCnrj9Zf2HNNadUx1y7t9dVQ",  # Brian Tyler Cohen
-    "UCfRqyGJ_1N41q0p6jFJwaLg",  # The Hill (Rising)
-    "UCYO_jab_esuFRV4b17AJtAw",  # Vox
-    "UCb8Rde3uRL0JLZ8ZzE1zE7w",  # TYT
-    "UCSm7JPn2xvLCGq53_wXA0Hg",  # Secular Talk
-
-    # Your channel for debugging/self-analysis
-    "UCtxBVxXhuIjsxajIgUi01pg",  # LeninwareAI
+    "UC7yRILFFJ2zI_Ut9oZuDbWw",  # TYT
+    "UC6TmAlx4q_GU8Z1LENzOdJw",  # Some news outlets
+    "UCaXkIU1QidjPwiAYu6GcHjg",  # MeidasTouch
+    "UCq16dvHk1FWk0TDvFu4CFOw",  # Brian Tyler Cohen
+    "UCZJb0pVQF8l0Zo4QCXFvSrg",  # Beau of the Fifth Column
+    "UCSPIZo7bGZpL8T3cHrIu9Kw",  # LegalEagle
 ]
 
-SEARCH_API = f"{YOUTUBE_API_BASE}/search"
-VIDEOS_API = f"{YOUTUBE_API_BASE}/videos"
+API_URL = "https://www.googleapis.com/youtube/v3/search"
 
 
-def get_candidate_videos() -> List[Dict[str, Any]]:
-    """
-    Fetch the latest videos from each configured YouTube channel ID.
+def fetch_channel_videos(channel_id: str):
+    """Return a list of raw video items from a YouTube channel."""
+    params = {
+        "key": YOUTUBE_API_KEY,
+        "channelId": channel_id,
+        "part": "snippet",
+        "order": "date",
+        "maxResults": 20,
+        "type": "video",
+    }
 
-    Returns a list of dicts:
-        {
-            "url": str,
-            "title": str,
-            "channel": str,
-            "views": int,
-            "likes": int,
-            "comments": int,
-        }
-    """
-    api_key = require_env("YOUTUBE_API_KEY")
+    resp = requests.get(API_URL, params=params, timeout=20)
 
-    candidates: List[Dict[str, Any]] = []
-    print("[ingest] Fetching videos from configured channels...")
+    if resp.status_code != 200:
+        raise RuntimeError(f"YoutubeAPI 403/400: {resp.text}")
 
-    for cid in CHANNEL_IDS:
+    return resp.json().get("items", [])
+
+
+def get_candidate_videos() -> list:
+    """Fetch videos from all configured channels and flatten list."""
+    all_items = []
+
+    for cid in CHANNELS:
         try:
-            # Most recent uploads by date
-            search_resp = requests.get(
-                SEARCH_API,
-                params={
-                    "part": "snippet",
-                    "channelId": cid,
-                    "maxResults": 3,
-                    "order": "date",
-                    "type": "video",
-                    "key": api_key,
-                },
-                timeout=20,
-            )
-            search_resp.raise_for_status()
-            search_data = search_resp.json()
-
-            for item in search_data.get("items", []):
-                video_id = item["id"]["videoId"]
-                snippet = item["snippet"]
-
-                # Fetch stats for each video
-                stats_resp = requests.get(
-                    VIDEOS_API,
-                    params={
-                        "part": "statistics",
-                        "id": video_id,
-                        "key": api_key,
-                    },
-                    timeout=20,
-                )
-                stats_resp.raise_for_status()
-                stats_data = stats_resp.json()
-
-                stats = stats_data["items"][0]["statistics"]
-
-                candidates.append(
-                    {
-                        "url": f"https://www.youtube.com/watch?v={video_id}",
-                        "title": snippet["title"],
-                        "channel": snippet["channelTitle"],
-                        "views": int(stats.get("viewCount", 0)),
-                        "likes": int(stats.get("likeCount", 0)),
-                        "comments": int(stats.get("commentCount", 0)),
-                    }
-                )
-
+            items = fetch_channel_videos(cid)
+            all_items.extend(items)
         except Exception as e:
-            print(f"[ingest] Failed to fetch for channel {cid}: {e}")
+            print(f"[ingest] Failed to fetch for {cid}: {e}")
 
-    print(f"[ingest] Found {len(candidates)} total videos.")
-    return candidates
+    return all_items
