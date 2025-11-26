@@ -1,38 +1,46 @@
-# ---------------------------------------------------------------------------
-# transcript_fetcher.py (rewritten)
-# ---------------------------------------------------------------------------
+# transcript_fetcher.py
 
 import requests
+from config import TRANSCRIPT_API_KEY, TRANSCRIPT_API_URL, require_env
 
-TRANSCRIPT_ENDPOINT = "https://api.transcriptapi.com/v1/fetch"  # example placeholder
 
-
-def fetch_transcript(video_id: str) -> str:
+def fetch_transcript(video_url: str) -> str:
     """
-    Fetch transcript cleanly.
-    Raises clean errors and prevents bad data from contaminating model context.
+    Fetches a transcript from TranscriptAPI for a given YouTube URL.
+
+    Returns:
+        A raw transcript string.
+
+    Raises:
+        RuntimeError if the request fails or the transcript is empty.
     """
 
-    if not video_id:
-        raise ValueError("No YouTube video_id provided.")
+    if not video_url:
+        raise ValueError("fetch_transcript() called with empty video_url")
+
+    require_env("TRANSCRIPT_API_KEY", TRANSCRIPT_API_KEY)
+    require_env("TRANSCRIPT_API_URL", TRANSCRIPT_API_URL)
+
+    params = {"url": video_url}
+    headers = {"x-api-key": TRANSCRIPT_API_KEY}
 
     try:
-        r = requests.get(TRANSCRIPT_ENDPOINT, params={"id": video_id}, timeout=20)
-        r.raise_for_status()
+        resp = requests.get(
+            TRANSCRIPT_API_URL,
+            params=params,
+            headers=headers,
+            timeout=25,
+        )
     except Exception as e:
-        raise RuntimeError(f"TranscriptAPI request failed: {e}")
+        raise RuntimeError(f"TranscriptAPI request error: {e}")
 
-    data = r.json()
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"TranscriptAPI error {resp.status_code}: {resp.text}"
+        )
 
-    # Defensive validation
-    if not data or "transcript" not in data:
-        raise RuntimeError("TranscriptAPI returned invalid response structure.")
-
-    text = data.get("transcript", "").strip()
-
+    text = resp.text.strip()
     if not text:
-        raise RuntimeError("TranscriptAPI returned empty transcript.")
+        raise RuntimeError("TranscriptAPI returned empty transcript")
 
     return text
-transcript = fetch_transcript(v["url"])
-print(f"[worker] Transcript length: {len(transcript)} chars")
