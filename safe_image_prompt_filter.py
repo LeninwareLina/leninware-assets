@@ -1,75 +1,42 @@
 # safe_image_prompt_filter.py
-"""
-Safe Image Prompt Filter (Medium Safety Level)
 
-Purpose:
-Transform Leninware commentary into image-safe, platform-compliant prompts
-that will reliably pass:
-- OpenAI Image API content guidelines
-- YouTube automated visual moderation
-- General platform safety expectations
+from pathlib import Path
 
-This does NOT change political meaning. It ONLY ensures imagery is abstract,
-symbolic, and non-literal, while keeping intensity and emotional punch.
-"""
-
-import re
-
-# Words/themes that must NEVER be literal for image generation
-BANNED_LITERALS = {
-    "fascist": "authoritarian",
-    "fascism": "authoritarian ideology",
-    "nazi": "extremist authoritarian symbolism",
-    "nazism": "extremist authoritarian symbolism",
-    "genocide": "state-led mass oppression",
-    "lynching": "racialized violent repression",
-    "violence": "conflict symbolism",
-    "riot": "civil unrest symbolism",
-    "blood": "metaphorical tension",
-    "weapon": "threatening posture (non-literal)",
-    "gun": "threat symbolism",
-    "ammo": "conflict imagery",
-    "execution": "state repression symbolism",
-    "terrorism": "extremist violence symbolism",
-}
-
-# Real names pattern (First Last)
-REAL_NAME_PATTERN = re.compile(r"\b[A-Z][a-z]+\s[A-Z][a-z]+\b")
+RULES_PATH = Path("prompts/safe_substitution_rules.txt")
 
 
-def generate_safe_image_prompts(commentary: str):
+def _load_rules():
     """
-    Takes raw Leninware commentary (text) and produces a list of
-    3 safe, abstract, symbolic OpenAI-image-ready prompts.
+    Load simple substitution rules from prompts/safe_substitution_rules.txt
+
+    Format per line:
+    bad_phrase => safe_phrase
     """
-    # Normalize case for replacements
-    text = commentary
+    rules = []
+    if not RULES_PATH.exists():
+        return rules
 
-    # Strip real names
-    text = REAL_NAME_PATTERN.sub("a political figure", text)
+    for line in RULES_PATH.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=>" not in line:
+            continue
+        bad, safe = [part.strip() for part in line.split("=>", 1)]
+        if bad and safe:
+            rules.append((bad, safe))
+    return rules
 
-    # Case-insensitive replace of banned literals
-    lowered = text.lower()
-    for banned, replacement in BANNED_LITERALS.items():
-        lowered = lowered.replace(banned, replacement)
 
-    # For now we don't try to be hyper-literal; we just evoke themes.
-    prompts = [
-        (
-            "abstract symbolic imagery representing political tension, "
-            "hierarchical power structures, dramatic lighting, red and black palette, "
-            "dynamic composition, no real people"
-        ),
-        (
-            "surreal metaphorical scene showing media influence and ideological conflict, "
-            "geometric shapes and fractured light patterns, "
-            "evoking systemic pressure and social struggle without literal violence"
-        ),
-        (
-            "stylized representation of class contradictions and mass oppression, "
-            "using expressive shadows and bold color fields, "
-            "evoking urgency without depicting specific events or individuals"
-        ),
-    ]
+_RULES = _load_rules()
 
-    return prompts
+
+def apply_safe_substitutions(text: str) -> str:
+    """
+    Apply substitution rules to prompts to reduce safety triggers.
+    """
+    if not text or not _RULES:
+        return text
+
+    out = text
+    for bad, safe in _RULES:
+        out = out.replace(bad, safe)
+    return out
