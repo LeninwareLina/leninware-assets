@@ -4,7 +4,7 @@ from typing import List, Optional
 import json
 import requests
 
-from config import SHOTSTACK_API_KEY, SHOTSTACK_BASE_URL, require_env
+from config import require_env, SHOTSTACK_BASE_URL
 
 
 def render_video_with_shotstack(
@@ -17,18 +17,14 @@ def render_video_with_shotstack(
 
     Returns:
         render_id or None (on failure).
-
-    This is deliberately minimal and defensive.
     """
-
     if not image_paths:
         print("[shotstack] No images provided; skipping render.")
         return None
 
-    api_key = require_env("SHOTSTACK_API_KEY", SHOTSTACK_API_KEY)
-    base_url = require_env("SHOTSTACK_BASE_URL", SHOTSTACK_BASE_URL)
+    api_key = require_env("SHOTSTACK_API_KEY")
+    base_url = SHOTSTACK_BASE_URL.rstrip("/") + "/render"
 
-    # Very simple timeline: single track of images, each ~3 seconds.
     clips = []
     for i, path in enumerate(image_paths):
         clips.append(
@@ -65,7 +61,6 @@ def render_video_with_shotstack(
         },
     }
 
-    # Clean out None values
     def _strip_none(obj):
         if isinstance(obj, dict):
             return {k: _strip_none(v) for k, v in obj.items() if v is not None}
