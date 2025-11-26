@@ -2,25 +2,25 @@
 
 import requests
 
-from config import (
-    TRANSCRIPT_API_KEY,
-    TRANSCRIPT_API_URL,
-    require_env,
-)
+from config import require_env, TRANSCRIPT_API_URL
 
 
 def fetch_transcript(video_url: str) -> str:
     """
     Fetch a transcript from TranscriptAPI for the given YouTube URL.
 
-    Returns a raw transcript string.
-    Raises RuntimeError on failure.
+    Returns:
+        Raw transcript text.
+
+    Raises:
+        ValueError  - if video_url is empty
+        RuntimeError - if API call fails or transcript is empty
     """
     if not video_url:
         raise ValueError("fetch_transcript() called with empty video_url")
 
-    api_key = require_env("TRANSCRIPT_API_KEY", TRANSCRIPT_API_KEY)
-    base_url = require_env("TRANSCRIPT_API_URL", TRANSCRIPT_API_URL)
+    api_key = require_env("TRANSCRIPT_API_KEY")
+    base_url = TRANSCRIPT_API_URL
 
     params = {"url": video_url}
     headers = {"x-api-key": api_key}
