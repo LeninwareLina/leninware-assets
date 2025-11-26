@@ -9,7 +9,6 @@ from image_prompt_builder import build_image_prompts_from_commentary
 from image_generator import generate_images
 from shotstack_renderer import render_video_with_shotstack
 
-
 VIRALITY_THRESHOLD = 2.0
 MAX_VIDEOS_PER_RUN = 2
 
@@ -86,7 +85,7 @@ def run_virality_pass():
 
         # 4) Render video
         render_video_with_shotstack(
-            audio_path=None,  # hook TTS later
+            audio_path=None,
             image_paths=image_paths,
             title=v["title"],
         )
