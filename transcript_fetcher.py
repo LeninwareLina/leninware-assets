@@ -23,7 +23,7 @@ def fetch_transcript(video_url: str) -> str:
     base_url = TRANSCRIPT_API_URL
 
     params = {"url": video_url}
-    headers = {"X-API-KEY": api_key}
+    headers = {"X-API-Key": api_key}
 
     try:
         resp = requests.get(
