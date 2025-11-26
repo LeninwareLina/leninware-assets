@@ -1,22 +1,25 @@
+# config.py
 import os
+
 
 def require_env(name: str) -> str:
     """
-    Fetch an environment variable by name.
-    Raises RuntimeError if missing or empty.
+    Fetches an environment variable or raises an error.
     """
     value = os.getenv(name)
     if not value:
-        raise RuntimeError(f"Missing required env variable: {name}")
+        raise EnvironmentError(f"Missing required environment variable: {name}")
     return value
 
 
-# --- External API Keys ---
+# === API KEYS ===
 OPENAI_API_KEY = require_env("OPENAI_API_KEY")
 ANTHROPIC_API_KEY = require_env("ANTHROPIC_API_KEY")
 SHOTSTACK_API_KEY = require_env("SHOTSTACK_API_KEY")
 TRANSCRIPT_API_KEY = require_env("TRANSCRIPT_API_KEY")
+TELEGRAM_BOT_TOKEN = require_env("TELEGRAM_BOT_TOKEN")
 YOUTUBE_API_KEY = require_env("YOUTUBE_API_KEY")
 
-# --- External URLs ---
-TRANSCRIPT_API_URL = "https://transcriptapi.com/v1/transcript"
+# === API BASE URLS ===
+TRANSCRIPT_API_URL = "https://api.transcriptapi.com/v1/extract"
+SHOTSTACK_BASE_URL = "https://api.shotstack.io/v1/render"
