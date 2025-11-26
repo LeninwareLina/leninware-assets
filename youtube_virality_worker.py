@@ -1,7 +1,5 @@
 # youtube_virality_worker.py
 
-import math
-import datetime as dt
 from typing import List, Dict, Any
 
 from youtube_ingest import get_candidate_videos
@@ -20,11 +18,11 @@ def score_video(video: Dict[str, Any]) -> float:
     """
     Simple virality scoring. Higher = more viral.
     """
-    views = video.get("views", 0) or 0
-    likes = video.get("likes", 0) or 0
-    comments = video.get("comments", 0) or 0
+    views = video.get("views") or 0
+    likes = video.get("likes") or 0
+    comments = video.get("comments") or 0
 
-    if views == 0:
+    if views <= 0:
         return 0.0
 
     engagement = (likes + comments) / max(views, 1)
@@ -35,33 +33,32 @@ def run_virality_pass():
     print("=== Running virality pass ===")
 
     candidates = get_candidate_videos()
-    print(f"Found {len(candidates)} candidates")
+    print(f"[worker] Found {len(candidates)} candidates")
 
-    scored = []
+    scored: List[Dict[str, Any]] = []
     for v in candidates:
         s = score_video(v)
         v["score"] = s
-        print(f"  {v['title']}: score={s}")
+        print(f"[worker] {v['title']}: score={s}")
         if s >= VIRALITY_THRESHOLD:
             scored.append(v)
 
-    # Limit the number processed per pass
     scored = scored[:MAX_VIDEOS_PER_RUN]
 
     if not scored:
-        print("No videos crossed threshold.")
+        print("[worker] No videos crossed threshold.")
         return
 
-    print(f"{len(scored)} videos crossed threshold; processing...")
+    print(f"[worker] {len(scored)} videos crossed threshold; processing...")
 
     for v in scored:
-        print(f"\n=== Processing candidate ===")
+        print("\n=== Processing candidate ===")
         print(f"Channel: {v['channel']}")
         print(f"Title: {v['title']}")
         print(f"URL: {v['url']}")
         print(f"Score: {v['score']}")
 
-        # Fetch transcript
+        # 1) Transcript
         try:
             transcript = fetch_transcript(v["url"])
             print(f"[worker] Transcript length: {len(transcript)}")
@@ -69,7 +66,7 @@ def run_virality_pass():
             print(f"[worker] Transcript fetch failed: {e}")
             continue
 
-        # Generate commentary
+        # 2) Commentary
         try:
             commentary = generate_leninware_commentary(transcript)
         except Exception as e:
@@ -79,19 +76,17 @@ def run_virality_pass():
         print("\n--- Leninware Commentary ---")
         print(commentary)
 
-        # Build image prompts
+        # 3) Image prompts + images
         prompts = build_image_prompts_from_commentary(commentary)
-
-        # Generate images
         try:
             image_paths = generate_images(prompts)
         except Exception as e:
             print(f"[worker] Image generation failed: {e}")
             image_paths = []
 
-        # Render video (stub)
+        # 4) Render video
         render_video_with_shotstack(
-            audio_path=None,
+            audio_path=None,  # hook TTS later
             image_paths=image_paths,
             title=v["title"],
         )
