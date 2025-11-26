@@ -4,19 +4,9 @@ from youtube_virality_worker import run_virality_pass
 
 
 def main():
-    """
-    Entry point for Leninware pipeline.
-
-    Right now this:
-    - fetches candidate videos
-    - scores them
-    - picks winners
-    - runs: transcript -> Leninware commentary -> image prompts -> images
-    - calls Shotstack stub
-
-    You can schedule this with Railway's cron or call manually.
-    """
+    print("[main] Starting Leninware pipeline single pass...")
     run_virality_pass()
+    print("[main] Leninware pass complete.")
 
 
 if __name__ == "__main__":
