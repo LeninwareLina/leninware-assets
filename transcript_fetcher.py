@@ -1,44 +1,28 @@
 # transcript_fetcher.py
 
 import requests
-
 from config import require_env, TRANSCRIPT_API_URL
 
 
 def fetch_transcript(video_url: str) -> str:
-    """
-    Fetch a transcript from TranscriptAPI for the given YouTube URL.
-
-    Returns:
-        Raw transcript text.
-
-    Raises:
-        ValueError  - if video_url is empty
-        RuntimeError - if API call fails or transcript is empty
-    """
     if not video_url:
         raise ValueError("fetch_transcript() called with empty video_url")
 
     api_key = require_env("TRANSCRIPT_API_KEY")
-    base_url = TRANSCRIPT_API_URL
-
-    params = {"url": video_url}
-    headers = {"X-API-Key": api_key}
+    base_url = TRANSCRIPT_API_URL.rstrip("/") + "/youtube/transcript"
 
     try:
         resp = requests.get(
             base_url,
-            params=params,
-            headers=headers,
+            params={"video_url": video_url},
+            headers={"Authorization": f"Bearer {api_key}"},
             timeout=25,
         )
     except Exception as e:
         raise RuntimeError(f"TranscriptAPI request error: {e}")
 
     if resp.status_code != 200:
-        raise RuntimeError(
-            f"TranscriptAPI error {resp.status_code}: {resp.text}"
-        )
+        raise RuntimeError(f"TranscriptAPI error {resp.status_code}: {resp.text}")
 
     text = resp.text.strip()
     if not text:
