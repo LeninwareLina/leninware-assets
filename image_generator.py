@@ -1,39 +1,33 @@
 # image_generator.py
 
 import base64
-from typing import List
 from pathlib import Path
-
-from openai import OpenAI
-from config import OPENAI_API_KEY, require_env
+from typing import List
 
 
-def generate_images(prompts: List[str], output_dir: str = "generated_images") -> List[str]:
+OUTPUT_DIR = Path("generated_images")
+OUTPUT_DIR.mkdir(exist_ok=True)
+
+
+def generate_images(prompts: List[str]) -> List[str]:
     """
-    Uses OpenAI Images API to generate one image per prompt.
-    Returns list of file paths.
+    Given a list of prompts, generate images and return a list of file paths.
 
-    NOTE: Keep this cheap by limiting resolution and count.
+    For now this is a stub: it just creates placeholder PNGs.
+    You can later wire it to an actual image API or local model.
     """
-    require_env("OPENAI_API_KEY", OPENAI_API_KEY)
-    client = OpenAI(api_key=OPENAI_API_KEY)
+    paths: List[str] = []
 
-    out_dir = Path(output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    if not prompts:
+        return paths
 
-    paths = []
-
-    for i, prompt in enumerate(prompts):
-        resp = client.images.generate(
-            model="gpt-image-1",
-            prompt=prompt,
-            size="1024x1024",
-            n=1,
+    for i, prompt in enumerate(prompts, start=1):
+        # Placeholder 1x1 transparent PNG
+        img_bytes = base64.b64decode(
+            b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAA"
+            b"AAAC0lEQVR42mP8/x8AAwMCAO+cq3sAAAAASUVORK5CYII="
         )
-        b64_data = resp.data[0].b64_json
-        img_bytes = base64.b64decode(b64_data)
-
-        path = out_dir / f"leninware_{i+1}.png"
+        path = OUTPUT_DIR / f"leninware_{i}.png"
         path.write_bytes(img_bytes)
         paths.append(str(path))
 
