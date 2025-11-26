@@ -1,8 +1,5 @@
-# transcript_fetcher.py
-
 import requests
 from config import require_env, TRANSCRIPT_API_URL
-
 
 def fetch_transcript(video_url: str) -> str:
     if not video_url:
@@ -10,14 +7,20 @@ def fetch_transcript(video_url: str) -> str:
 
     api_key = require_env("TRANSCRIPT_API_KEY")
 
-    # Must match TranscriptAPI spec
-    base_url = TRANSCRIPT_API_URL.rstrip("/") + "/youtube/transcript"
+    headers = {
+        "X-API-Key": api_key,    # this capitalization matters!
+        "Accept": "text/plain",
+    }
+
+    params = {
+        "video_url": video_url
+    }
 
     try:
         resp = requests.get(
-            base_url,
-            params={"video_url": video_url},   # <-- MUST be video_url
-            headers={"Authorization": f"Bearer {api_key}"},
+            TRANSCRIPT_API_URL,
+            headers=headers,
+            params=params,
             timeout=25,
         )
     except Exception as e:
