@@ -10,8 +10,7 @@ client = OpenAI()
 with open(RAW_PROMPT_PATH, "r") as f:
     RAW_PROMPT = f.read().strip()
 
-
-def generate_commentary(channel: str, title: str, transcript: str) -> str:
+def generate_leninware_commentary(transcript: str) -> str:
     """
     Generate Leninware commentary with strict transcript boundaries.
     Prevents model from ingesting logs, errors, or context pollution.
