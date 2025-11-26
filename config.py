@@ -48,3 +48,15 @@ YOUTUBE_FETCH_LIMIT = int(os.getenv("YOUTUBE_FETCH_LIMIT", "20"))
 
 # Virality scoring threshold
 VIRALITY_THRESHOLD = float(os.getenv("VIRALITY_THRESHOLD", "5.0"))
+# -------------------------------------------------
+# SHOTSTACK CONFIG
+# -------------------------------------------------
+
+# Your Shotstack API key (optional — only needed if rendering video)
+SHOTSTACK_API_KEY = os.getenv("SHOTSTACK_API_KEY")
+
+# Shotstack base URL — defaults to v1 region if not set
+SHOTSTACK_BASE_URL = os.getenv(
+    "SHOTSTACK_BASE_URL",
+    "https://api.shotstack.io/stage"   # you can swap to /v1 or /stage depending on your account
+)
