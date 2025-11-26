@@ -5,7 +5,6 @@ import requests
 
 from config import require_env, YOUTUBE_API_BASE
 
-
 # Channels to ingest (restored + your channel)
 CHANNEL_IDS = [
     "UCXIJgqnII2ZOINSWNOGFThA",  # Fox News
