@@ -3,10 +3,7 @@ from typing import Optional
 
 import requests
 
-from config import TRANSCRIPT_API_KEY
-
-# Official v2 endpoint from TranscriptAPI docs
-API_URL = "https://api.transcriptapi.com/api/v2/video-transcript"
+from config import require_env, TRANSCRIPT_API_V2_URL
 
 # Handles normal watch URLs, youtu.be and shorts links
 YOUTUBE_ID_RE = re.compile(
@@ -14,69 +11,76 @@ YOUTUBE_ID_RE = re.compile(
 )
 
 
-def extract_video_id(url: str) -> Optional[str]:
-    """Pull a YouTube video ID out of a URL."""
-    match = YOUTUBE_ID_RE.search(url)
-    return match.group(1) if match else None
+def _extract_video_id(url: str) -> Optional[str]:
+    """Pull a YouTube video ID out of a URL or raw ID."""
+    # If it's already an 11-char ID, accept it
+    if re.fullmatch(r"[A-Za-z0-9_-]{11}", url):
+        return url
+
+    m = YOUTUBE_ID_RE.search(url)
+    if m:
+        return m.group(1)
+
+    return None
 
 
 def fetch_transcript(video_url: str) -> Optional[str]:
-    """
-    Fetch a transcript from TranscriptAPI for a given YouTube URL.
+    """Fetch a transcript for a YouTube video using TranscriptAPI.
 
-    Returns the transcript text, or None if not available / error.
+    Returns transcript text, or None if not available.
     """
-    if not TRANSCRIPT_API_KEY:
-        print("Set TRANSCRIPT_API_KEY in your environment first")
-        return None
+    api_key = require_env("TRANSCRIPT_API_KEY")
 
-    video_id = extract_video_id(video_url)
+    video_id = _extract_video_id(video_url)
     if not video_id:
-        print(f"[worker] Could not extract video id from URL: {video_url}")
+        print(f"[transcript] Could not extract video id from URL: {video_url}")
         return None
 
     try:
         resp = requests.get(
-            API_URL,
-            headers={"x-api-key": TRANSCRIPT_API_KEY},
+            TRANSCRIPT_API_V2_URL,
+            headers={"x-api-key": api_key},
             params={"platform": "youtube", "video_id": video_id},
             timeout=30,
         )
     except Exception as e:
-        print(f"[worker] TranscriptAPI request error: {e}")
+        print(f"[transcript] TranscriptAPI request error: {e}")
         return None
 
     if resp.status_code == 404:
-        print("[worker] Transcript not found for this video")
+        print("[transcript] Transcript not found for this video")
         return None
 
     if resp.status_code != 200:
-        print(f"[worker] TranscriptAPI error {resp.status_code}: {resp.text[:200]}")
+        print(f"[transcript] TranscriptAPI error {resp.status_code}: {resp.text[:200]}")
         return None
 
-    data = resp.json()
+    try:
+        data = resp.json()
+    except ValueError:
+        print("[transcript] Non-JSON response from TranscriptAPI")
+        return None
 
-    # Be flexible about the response shape; handle both v1/v2 style payloads.
+    # Flexibly handle different shapes: segments, lines, or raw transcript
     transcript_text = ""
 
     if isinstance(data, dict):
-        if "segments" in data:
+        if isinstance(data.get("segments"), list):
             parts = [seg.get("text", "") for seg in data["segments"]]
             transcript_text = "\n".join(p for p in parts if p)
-        elif "lines" in data:
+        elif isinstance(data.get("lines"), list):
             parts = [ln.get("text", "") for ln in data["lines"]]
             transcript_text = "\n".join(p for p in parts if p)
         elif isinstance(data.get("transcript"), str):
             transcript_text = data["transcript"]
         else:
-            # Fallback: best-effort stringification
             transcript_text = str(data)
     else:
         transcript_text = str(data)
 
     transcript_text = transcript_text.strip()
     if not transcript_text:
-        print("[worker] Empty transcript returned from TranscriptAPI")
+        print("[transcript] Empty transcript returned from TranscriptAPI")
         return None
 
     return transcript_text
