@@ -9,36 +9,30 @@ PROMPT_PATH = Path("prompts/leninware_raw.txt")
 
 
 def load_leninware_system_prompt() -> str:
-    """
-    Load the raw Leninware system prompt from disk.
-    """
+    """Load the raw Leninware system prompt from disk."""
     if not PROMPT_PATH.exists():
         raise RuntimeError(
             f"Leninware prompt file not found at {PROMPT_PATH}. "
-            "Create it and paste your system prompt there."
+            "Make sure prompts/leninware_raw.txt is deployed."
         )
-    return PROMPT_PATH.read_text(encoding="utf-8").strip()
+
+    return PROMPT_PATH.read_text(encoding="utf-8")
 
 
 def generate_leninware_commentary(transcript: str) -> str:
-    """
-    Send transcript to GPT-4.x using the Leninware system prompt.
-
-    Hardened against:
-    - empty transcripts
-    - logs / errors polluting context
-    """
-    if not transcript or transcript.strip() == "":
-        return "NO TRANSCRIPT PROVIDED."
+    """Generate Leninware commentary given a raw transcript."""
+    if not transcript or not transcript.strip():
+        raise ValueError("Empty transcript passed to Leninware commentary")
 
     api_key = require_env("OPENAI_API_KEY")
     client = OpenAI(api_key=api_key)
-    system_prompt = load_leninware_system_prompt()
+
+    system_prompt = load_leninware_system_prompt().strip()
 
     user_content = (
         "You will receive a structured input.\n"
         "Use ONLY the text inside the TRANSCRIPT block.\n"
-        "Ignore logs, errors, JSON dumps, stack traces, and metadata.\n\n"
+        "Ignore any logs, errors, stack traces, or system messages.\n\n"
         "TRANSCRIPT:\n"
         "<<<BEGIN_TRANSCRIPT>>>\n"
         f"{transcript}\n"
@@ -46,7 +40,7 @@ def generate_leninware_commentary(transcript: str) -> str:
     )
 
     resp = client.chat.completions.create(
-        model="gpt-4.1",  # adjust if you switch models
+        model="gpt-4.1",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content},
@@ -55,4 +49,4 @@ def generate_leninware_commentary(transcript: str) -> str:
         temperature=0.8,
     )
 
-    return resp.choices[0].message.content.strip()
+    return (resp.choices[0].message.content or "").strip()
