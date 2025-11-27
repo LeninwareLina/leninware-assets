@@ -1,38 +1,51 @@
+import os
 import requests
-from config import require_env, TRANSCRIPT_API_URL
+import time
 
-def fetch_transcript(video_url: str) -> str:
-    if not video_url:
-        raise ValueError("fetch_transcript() called with empty video_url")
+TRANSCRIPT_API_KEY = os.getenv("TRANSCRIPT_API_KEY")
 
-    api_key = require_env("TRANSCRIPT_API_KEY")
+if not TRANSCRIPT_API_KEY:
+    raise RuntimeError("TRANSCRIPT_API_KEY not set in environment")
 
-    headers = {
-        "X-API-Key": api_key,    # this capitalization matters!
-        "Accept": "text/plain",
-    }
+TRANSCRIPT_ENDPOINT = "https://transcriptapi.com/api/v1/transcript"
 
-    params = {
-        "video_url": video_url
-    }
 
-    try:
-        resp = requests.get(
-            TRANSCRIPT_API_URL,
-            headers=headers,
-            params=params,
-            timeout=25,
-        )
-    except Exception as e:
-        raise RuntimeError(f"TranscriptAPI request error: {e}")
+def fetch_transcript(video_url, retries=5, backoff=2):
+    """
+    Fetch transcript for a YouTube video using TranscriptAPI.
+    Retries automatically on connection failures.
+    """
+    for attempt in range(retries):
+        try:
+            response = requests.post(
+                TRANSCRIPT_ENDPOINT,
+                json={"url": video_url},
+                headers={"x-api-key": TRANSCRIPT_API_KEY},
+                timeout=30,
+            )
 
-    if resp.status_code != 200:
-        raise RuntimeError(
-            f"TranscriptAPI error {resp.status_code}: {resp.text}"
-        )
+            # Good response
+            if response.status_code == 200:
+                data = response.json()
+                return data.get("transcript", "")
 
-    text = resp.text.strip()
-    if not text:
-        raise RuntimeError("TranscriptAPI returned empty transcript")
+            # Not found or no transcript available
+            if response.status_code in (400, 404):
+                return ""
 
-    return text
+            # Otherwise: treat as temporary server error
+            print(
+                f"[TranscriptAPI] HTTP {response.status_code}: {response.text}. "
+                f"Retrying ({attempt+1}/{retries})..."
+            )
+
+        except requests.exceptions.RequestException as e:
+            print(
+                f"[TranscriptAPI] Network error: {e}. "
+                f"Retrying ({attempt+1}/{retries})..."
+            )
+
+        time.sleep(backoff)
+
+    print("[TranscriptAPI] FAILED after retries.")
+    return ""
