@@ -1,58 +1,44 @@
-from youtube_ingest import get_candidate_videos
-from transcript_fetcher import fetch_transcript
-from leninware_commentary import generate_leninware_commentary
+import os
+import sys
+import json
+import math
+import datetime
+import requests
+
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+VIDEOS_ENDPOINT = "https://www.googleapis.com/youtube/v3/videos"
+
+# Default threshold for "good enough to process"
+DEFAULT_THRESHOLD = 6.0
 
 
-def score_video(item) -> float:
-    """Quick heuristic score system."""
-    title = item["snippet"]["title"].lower()
-    score = 0
+def _parse_published_at(published_at_str: str) -> datetime.datetime:
+    """
+    Parse an ISO 8601 publishedAt string into a UTC datetime.
+    """
+    # Examples: "2025-11-27T14:23:10Z"
+    if not published_at_str:
+        return datetime.datetime.utcnow()
 
-    if "breaking" in title:
-        score += 3
-    if "news" in title:
-        score += 2
-    if "trump" in title:
-        score += 2
-    if "live" in title:
-        score -= 1
-
-    return score
+    try:
+        if published_at_str.endswith("Z"):
+            published_at_str = published_at_str[:-1]
+        return datetime.datetime.fromisoformat(published_at_str)
+    except Exception:
+        return datetime.datetime.utcnow()
 
 
-def run_virality_pass():
-    candidates = get_candidate_videos()
+def compute_score(snippet: dict, statistics: dict) -> float:
+    """
+    Compute a simple 0–10 virality score based on:
+      - total views
+      - view velocity (views per hour since publish)
+      - like ratio
+      - comment activity
+      - recency penalty
+    """
 
-    print(f"[worker] Found {len(candidates)} candidates")
-
-    # Score and filter
-    processed = []
-    for item in candidates:
-        score = score_video(item)
-        if score >= 3:
-            processed.append((item, score))
-
-    print(f"[worker] {len(processed)} videos crossed threshold.")
-
-    # Process high-score videos
-    for item, score in processed:
-        url = f"https://www.youtube.com/watch?v={item['id']['videoId']}"
-        title = item["snippet"]["title"]
-        channel = item["snippet"]["channelTitle"]
-        print("\n=== Processing candidate ===")
-        print(f"Channel: {channel}")
-        print(f"Title: {title}")
-        print(f"URL: {url}")
-        print(f"Score: {score}")
-
-        # Fetch transcript
-        try:
-            transcript = fetch_transcript(url)
-        except Exception as e:
-            print(f"[worker] Transcript fetch failed: {e}")
-            continue
-
-        # Generate commentary
-        commentary = generate_leninware_commentary(transcript)
-        print("[worker] Commentary generated.")
-        print(commentary)
+    now = datetime.datetime.utcnow()
+    published_at_str = snippet.get("publishedAt") or ""
+    published_dt = _parse_published_at(published_at_str)
+    hours_since = max((now - published_dt).total_seconds() / 3600.0, 1.0)
