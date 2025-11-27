@@ -1,175 +1,164 @@
+# youtube_virality_worker.py
+
 import os
-import sys
-import json
-import math
-import datetime
+import logging
+import re
+from typing import Dict, List, Any
+
 import requests
 
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
-VIDEOS_ENDPOINT = "https://www.googleapis.com/youtube/v3/videos"
+logger = logging.getLogger(__name__)
 
-# Default threshold for "good enough to process"
-DEFAULT_THRESHOLD = 6.0
+YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
+YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
+
+# Hard caps so we don't blast the quota
+MAX_CANDIDATES_PER_RUN = int(os.environ.get("MAX_VIRALITY_CANDIDATES", "20"))
+DEFAULT_VIRALITY_THRESHOLD = float(os.environ.get("VIRALITY_THRESHOLD", "6.0"))
 
 
-def _parse_published_at(published_at_str: str) -> datetime.datetime:
+def _extract_video_id(url: str) -> str:
     """
-    Parse an ISO 8601 publishedAt string into a UTC datetime.
+    Try to extract a YouTube video ID from a URL or ID string.
     """
-    # Examples: "2025-11-27T14:23:10Z"
-    if not published_at_str:
-        return datetime.datetime.utcnow()
+    # If it's already an 11-char ID, just use it
+    if re.fullmatch(r"[a-zA-Z0-9_-]{11}", url):
+        return url
 
-    try:
-        if published_at_str.endswith("Z"):
-            published_at_str = published_at_str[:-1]
-        return datetime.datetime.fromisoformat(published_at_str)
-    except Exception:
-        return datetime.datetime.utcnow()
+    # Standard watch URL
+    m = re.search(r"[?&]v=([a-zA-Z0-9_-]{11})", url)
+    if m:
+        return m.group(1)
+
+    # Short youtu.be URL
+    m = re.search(r"youtu\.be/([a-zA-Z0-9_-]{11})", url)
+    if m:
+        return m.group(1)
+
+    return url  # fall back; worst-case API will complain
 
 
-def compute_score(snippet: dict, statistics: dict) -> float:
+def _fetch_stats(video_ids: List[str]) -> Dict[str, Dict[str, Any]]:
     """
-    Compute a simple 0–10 virality score based on:
-      - total views
-      - view velocity (views per hour since publish)
-      - like ratio
-      - comment activity
-      - recency penalty
-    """
-
-    now = datetime.datetime.utcnow()
-    published_at_str = snippet.get("publishedAt") or ""
-    published_dt = _parse_published_at(published_at_str)
-    hours_since = max((now - published_dt).total_seconds() / 3600.0, 1.0)
-
-    views = int(statistics.get("viewCount", "0") or 0)
-    likes = int(statistics.get("likeCount", "0") or 0)
-    comments = int(statistics.get("commentCount", "0") or 0)
-
-    # Basic components
-    view_velocity = views / hours_since  # views per hour
-    like_ratio = (likes / views) if views > 0 else 0.0
-    comment_rate = comments / hours_since  # comments per hour
-
-    # Log-scale for views & velocity (avoid huge blowups)
-    views_term = math.log10(views + 1) * 2.0          # up to ~10 for viral content
-    velocity_term = math.log10(view_velocity + 1) * 2.0
-
-    # Engagement factors
-    like_term = like_ratio * 3.0                      # 0–3
-    comment_term = min(comment_rate / 5.0, 2.0)       # cap at +2
-
-    # Slight penalty for older videos
-    recency_penalty = min(hours_since / 48.0, 3.0)    # max -3 after ~4 days
-
-    raw_score = views_term + velocity_term + like_term + comment_term - recency_penalty
-
-    # Clamp to [0, 10]
-    score = max(0.0, min(10.0, raw_score))
-    return round(score, 2)
-
-
-def fetch_stats_for_candidates(candidates: list[dict]) -> dict:
-    """
-    Given a list of candidates with 'video_id',
-    fetch snippet+statistics for all in a single videos.list call.
-
-    Returns a dict: {video_id: (snippet, statistics)}.
+    Fetch basic statistics for a batch of video IDs.
+    Returns a mapping video_id -> stats dict.
     """
     if not YOUTUBE_API_KEY:
-        raise RuntimeError("YOUTUBE_API_KEY is not set")
-
-    video_ids = [c["video_id"] for c in candidates if "video_id" in c]
-    # Deduplicate
-    video_ids = list(dict.fromkeys(video_ids))
-
-    if not video_ids:
+        logger.error("YOUTUBE_API_KEY not set in environment")
         return {}
 
-    # YouTube lets up to 50 IDs per call
-    ids_param = ",".join(video_ids[:50])
+    stats_by_id: Dict[str, Dict[str, Any]] = {}
 
+    # YouTube videos.list supports up to 50 IDs per call; we’ll be well under that.
+    ids_param = ",".join(video_ids)
     params = {
-        "part": "snippet,statistics",
+        "part": "statistics",
         "id": ids_param,
         "key": YOUTUBE_API_KEY,
     }
 
-    resp = requests.get(VIDEOS_ENDPOINT, params=params, timeout=20)
-    data = resp.json()
-
-    if "error" in data:
-        reason = data["error"]["errors"][0].get("reason", "unknown")
-        message = data["error"].get("message", "")
-        print(f"[virality] YouTube API error: {reason} - {message}", file=sys.stderr)
+    try:
+        resp = requests.get(
+            f"{YOUTUBE_API_BASE}/videos",
+            params=params,
+            timeout=15,
+        )
+        resp.raise_for_status()
+    except requests.RequestException as e:
+        logger.error("Error calling YouTube videos.list: %s", e)
         return {}
 
-    results = {}
+    data = resp.json()
     for item in data.get("items", []):
         vid = item.get("id")
-        snippet = item.get("snippet", {})
-        statistics = item.get("statistics", {})
+        stats = item.get("statistics", {})
         if vid:
-            results[vid] = (snippet, statistics)
+            stats_by_id[vid] = stats
 
-    return results
+    return stats_by_id
 
 
-def score_candidates(candidates: list[dict], threshold: float = DEFAULT_THRESHOLD) -> list[dict]:
+def _compute_virality_score(candidate: Dict[str, Any], stats: Dict[str, Any]) -> float:
     """
-    Take a list of candidates (each with 'video_id'),
-    fetch stats once, compute scores, and return only those
-    that meet or exceed the threshold.
+    Heuristic virality score based on YouTube statistics.
+    You can tune this, but keep the function name stable.
     """
-    stats_map = fetch_stats_for_candidates(candidates)
-    scored = []
-
-    for c in candidates:
-        vid = c.get("video_id")
-        if not vid or vid not in stats_map:
-            continue
-
-        snippet, statistics = stats_map[vid]
-        score = compute_score(snippet, statistics)
-        c = dict(c)  # shallow copy
-        c["score"] = score
-        scored.append(c)
-
-    # Filter by threshold
-    filtered = [c for c in scored if c.get("score", 0) >= threshold]
-
-    # Sort descending by score
-    filtered.sort(key=lambda x: x.get("score", 0), reverse=True)
-    return filtered
-
-
-def main():
-    """
-    CLI entrypoint:
-    - Read JSON list of candidates from stdin
-    - Add scores
-    - Filter by DEFAULT_THRESHOLD
-    - Print JSON list to stdout
-    """
-    raw = sys.stdin.read().strip()
-    if not raw:
-        print("[]")
-        return
-
     try:
-        candidates = json.loads(raw)
-    except json.JSONDecodeError:
-        print("[]")
-        return
+        views = int(stats.get("viewCount", 0))
+        likes = int(stats.get("likeCount", 0))
+        comments = int(stats.get("commentCount", 0))
+    except ValueError:
+        views = likes = comments = 0
 
-    if not isinstance(candidates, list):
-        print("[]")
-        return
+    # Avoid division by zero
+    like_ratio = likes / views if views > 0 else 0.0
+    comment_ratio = comments / views if views > 0 else 0.0
 
-    filtered = score_candidates(candidates, threshold=DEFAULT_THRESHOLD)
-    print(json.dumps(filtered))
+    # Use the ingester's heuristic score as a base if present
+    base_score = float(candidate.get("score", 0.0))
+
+    # Very simple combined metric; tune later if needed.
+    virality = base_score + (like_ratio * 10.0) + (comment_ratio * 20.0)
+
+    return virality
 
 
-if __name__ == "__main__":
-    main()
+def run_virality_pass(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Main entrypoint expected by main.py.
+
+    - Takes a list of candidate dicts (from the ingester)
+    - Fetches YouTube stats for the top N by initial score
+    - Computes a virality score
+    - Returns only candidates whose virality_score >= threshold,
+      sorted descending by virality_score.
+    """
+    if not candidates:
+        logger.info("[virality] No candidates provided")
+        return []
+
+    # Sort by initial ingester score (if present), then cut to a safe max
+    sorted_candidates = sorted(
+        candidates,
+        key=lambda c: c.get("score", 0),
+        reverse=True,
+    )[:MAX_CANDIDATES_PER_RUN]
+
+    video_ids = []
+    for c in sorted_candidates:
+        vid = c.get("video_id") or _extract_video_id(c.get("url", ""))
+        c["video_id"] = vid
+        video_ids.append(vid)
+
+    stats_by_id = _fetch_stats(video_ids)
+    if not stats_by_id:
+        logger.warning("[virality] No stats fetched; returning empty list")
+        return []
+
+    scored: List[Dict[str, Any]] = []
+    for c in sorted_candidates:
+        vid = c["video_id"]
+        stats = stats_by_id.get(vid)
+        if not stats:
+            continue
+        virality_score = _compute_virality_score(c, stats)
+        enriched = {
+            **c,
+            "virality_score": virality_score,
+            "statistics": stats,
+        }
+        scored.append(enriched)
+
+    # Filter & sort by virality_score
+    threshold = DEFAULT_VIRALITY_THRESHOLD
+    viral = [c for c in scored if c["virality_score"] >= threshold]
+    viral.sort(key=lambda c: c["virality_score"], reverse=True)
+
+    logger.info(
+        "[virality] %d candidates in, %d above threshold %.2f",
+        len(candidates),
+        len(viral),
+        threshold,
+    )
+
+    return viral
