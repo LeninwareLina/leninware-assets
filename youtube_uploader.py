@@ -1,6 +1,7 @@
 # youtube_uploader.py
 
-import os
+from typing import List, Optional
+
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
@@ -12,44 +13,49 @@ TOKEN_URI = "https://oauth2.googleapis.com/token"
 
 
 def _get_youtube_client():
+    """Build an authenticated YouTube client using OAuth refresh token."""
+    client_id = require_env("YOUTUBE_UPLOAD_CLIENT_ID")
+    client_secret = require_env("YOUTUBE_UPLOAD_CLIENT_SECRET")
+    refresh_token = require_env("YOUTUBE_UPLOAD_REFRESH_TOKEN")
+
     creds = Credentials(
         token=None,
-        refresh_token=require_env("YT_REFRESH_TOKEN"),
-        client_id=require_env("YT_CLIENT_ID"),
-        client_secret=require_env("YT_CLIENT_SECRET"),
+        refresh_token=refresh_token,
         token_uri=TOKEN_URI,
+        client_id=client_id,
+        client_secret=client_secret,
         scopes=[YOUTUBE_UPLOAD_SCOPE],
     )
+
     return build("youtube", "v3", credentials=creds)
 
 
 def upload_video(
     video_path: str,
     title: str,
-    description: str,
-    tags=None,
+    description: str = "",
+    tags: Optional[List[str]] = None,
     privacy_status: str = "public",
-):
-    """
-    Upload a video file to YouTube using a stored refresh token.
-    """
+) -> str:
+    """Upload a video file to YouTube.
 
-    if not os.path.exists(video_path):
-        raise FileNotFoundError(f"Video file not found: {video_path}")
-
+    Returns:
+        The uploaded video ID.
+    """
     youtube = _get_youtube_client()
 
     body = {
         "snippet": {
             "title": title,
             "description": description,
-            "tags": tags or [],
-            "categoryId": "25",  # News & Politics
         },
         "status": {
             "privacyStatus": privacy_status,
         },
     }
+
+    if tags:
+        body["snippet"]["tags"] = tags
 
     media = MediaFileUpload(video_path, chunksize=-1, resumable=True)
 
@@ -65,5 +71,6 @@ def upload_video(
         if status:
             print(f"[upload] Upload progress: {int(status.progress() * 100)}%")
 
-    print(f"[upload] Video uploaded. ID: {response.get('id')}")
-    return response.get("id")
+    video_id = response.get("id")
+    print(f"[upload] Video uploaded. ID: {video_id}")
+    return video_id
