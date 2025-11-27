@@ -4,7 +4,8 @@ import os
 
 def require_env(name: str) -> str:
     """
-    Fetches an environment variable or raises an error.
+    Fetch an environment variable or raise an error if missing.
+    Used for sensitive configuration like API keys.
     """
     value = os.getenv(name)
     if not value:
@@ -12,14 +13,9 @@ def require_env(name: str) -> str:
     return value
 
 
-# === API KEYS ===
-OPENAI_API_KEY = require_env("OPENAI_API_KEY")
-ANTHROPIC_API_KEY = require_env("ANTHROPIC_API_KEY")
-SHOTSTACK_API_KEY = require_env("SHOTSTACK_API_KEY")
-TRANSCRIPT_API_KEY = require_env("TRANSCRIPT_API_KEY")
-TELEGRAM_BOT_TOKEN = require_env("TELEGRAM_BOT_TOKEN")
-YOUTUBE_API_KEY = require_env("YOUTUBE_API_KEY")
+# Base URLs for external services. These are stable constants and do NOT
+# attempt to read secrets at import time.
+TRANSCRIPT_API_BASE_URL = "https://api.transcriptapi.com"
+TRANSCRIPT_API_V2_URL = f"{TRANSCRIPT_API_BASE_URL}/api/v2/video-transcript"
 
-# === API BASE URLS ===
-TRANSCRIPT_API_URL = "https://api.transcriptapi.com/v1/extract"
-SHOTSTACK_BASE_URL = "https://api.shotstack.io/v1/render"
+SHOTSTACK_API_URL = "https://api.shotstack.io/edit/v1/render"
