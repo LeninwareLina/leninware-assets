@@ -1,127 +1,82 @@
-import os
-import json
-import time
-import datetime
+import re
+from typing import Optional
+
 import requests
 
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
-CACHE_FILE = "seen_videos.json"
+from config import TRANSCRIPT_API_KEY
 
-CHANNELS = [
-    "UCXIJgqnII2ZOINSWNOGFThA",  # Fox News
-    "UCaXkIU1QidjPwiAYu6GcHjg",  # MSNBC
-    "UC6oQ7Oq9WgMt5NL3SF3xC4Q",  # CNN
-]
+# Official v2 endpoint from TranscriptAPI docs
+API_URL = "https://api.transcriptapi.com/api/v2/video-transcript"
 
-SAVE_THRESHOLD = 3  # Your scoring system threshold
+# Handles normal watch URLs, youtu.be and shorts links
+YOUTUBE_ID_RE = re.compile(
+    r"(?:v=|youtu\.be/|shorts/)([A-Za-z0-9_-]{11})"
+)
 
 
-# -----------------------------------------------------------
-#  LOAD CACHE
-# -----------------------------------------------------------
-def load_cache():
-    if not os.path.exists(CACHE_FILE):
-        return set()
+def extract_video_id(url: str) -> Optional[str]:
+    """Pull a YouTube video ID out of a URL."""
+    match = YOUTUBE_ID_RE.search(url)
+    return match.group(1) if match else None
+
+
+def fetch_transcript(video_url: str) -> Optional[str]:
+    """
+    Fetch a transcript from TranscriptAPI for a given YouTube URL.
+
+    Returns the transcript text, or None if not available / error.
+    """
+    if not TRANSCRIPT_API_KEY:
+        print("Set TRANSCRIPT_API_KEY in your environment first")
+        return None
+
+    video_id = extract_video_id(video_url)
+    if not video_id:
+        print(f"[worker] Could not extract video id from URL: {video_url}")
+        return None
+
     try:
-        with open(CACHE_FILE, "r") as f:
-            return set(json.load(f))
-    except:
-        return set()
+        resp = requests.get(
+            API_URL,
+            headers={"x-api-key": TRANSCRIPT_API_KEY},
+            params={"platform": "youtube", "video_id": video_id},
+            timeout=30,
+        )
+    except Exception as e:
+        print(f"[worker] TranscriptAPI request error: {e}")
+        return None
 
+    if resp.status_code == 404:
+        print("[worker] Transcript not found for this video")
+        return None
 
-# -----------------------------------------------------------
-#  SAVE CACHE
-# -----------------------------------------------------------
-def save_cache(cache):
-    with open(CACHE_FILE, "w") as f:
-        json.dump(list(cache), f)
+    if resp.status_code != 200:
+        print(f"[worker] TranscriptAPI error {resp.status_code}: {resp.text[:200]}")
+        return None
 
+    data = resp.json()
 
-# -----------------------------------------------------------
-#  CHECK YOUTUBE QUOTA BEFORE ANYTHING ELSE
-# -----------------------------------------------------------
-def quota_test():
-    test_url = f"https://www.googleapis.com/youtube/v3/videos?part=id&id=invalid123&key={YOUTUBE_API_KEY}"
-    r = requests.get(test_url)
-    if "error" in r.json():
-        reason = r.json()["error"]["errors"][0]["reason"]
-        print(f"[QUOTA CHECK] YouTube API error: {reason}")
-        if reason in ["quotaExceeded", "dailyLimitExceeded"]:
-            return False
-    return True
+    # Be flexible about the response shape; handle both v1/v2 style payloads.
+    transcript_text = ""
 
+    if isinstance(data, dict):
+        if "segments" in data:
+            parts = [seg.get("text", "") for seg in data["segments"]]
+            transcript_text = "\n".join(p for p in parts if p)
+        elif "lines" in data:
+            parts = [ln.get("text", "") for ln in data["lines"]]
+            transcript_text = "\n".join(p for p in parts if p)
+        elif isinstance(data.get("transcript"), str):
+            transcript_text = data["transcript"]
+        else:
+            # Fallback: best-effort stringification
+            transcript_text = str(data)
+    else:
+        transcript_text = str(data)
 
-# -----------------------------------------------------------
-#  FETCH LATEST VIDEOS FOR A CHANNEL
-# -----------------------------------------------------------
-def fetch_channel_uploads(channel_id):
-    url = (
-        "https://www.googleapis.com/youtube/v3/search"
-        f"?key={YOUTUBE_API_KEY}&channelId={channel_id}"
-        "&part=snippet&type=video&order=date&maxResults=5"
-    )
-    r = requests.get(url)
-    data = r.json()
+    transcript_text = transcript_text.strip()
+    if not transcript_text:
+        print("[worker] Empty transcript returned from TranscriptAPI")
+        return None
 
-    if "error" in data:
-        reason = data["error"]["errors"][0]["reason"]
-        print(f"[INGESTER] ERROR fetching channel {channel_id}: {reason}")
-        return []
-
-    videos = []
-    for item in data.get("items", []):
-        vid = item["id"]["videoId"]
-        title = item["snippet"]["title"]
-        published = item["snippet"]["publishedAt"]
-        videos.append((vid, title, published))
-
-    return videos
-
-
-# -----------------------------------------------------------
-#  MAIN INGESTER LOGIC
-# -----------------------------------------------------------
-def main():
-    print("=== SAFE INGESTER START ===")
-
-    if not quota_test():
-        print("[INGESTER] ABORT — YouTube quota exceeded.")
-        return
-
-    cache = load_cache()
-    print(f"[CACHE] Loaded {len(cache)} previously seen videos.")
-
-    new_candidates = []
-
-    for channel in CHANNELS:
-        print(f"[CHANNEL] Checking uploads for: {channel}")
-
-        videos = fetch_channel_uploads(channel)
-
-        for video_id, title, published in videos:
-            if video_id in cache:
-                print(f"  - Skipping already-seen video: {video_id}")
-                continue
-
-            print(f"  + NEW video: {video_id} — {title}")
-            new_candidates.append({
-                "video_id": video_id,
-                "title": title,
-                "channel": channel,
-                "published": published,
-                "score": 5  # always high enough so they pass to the worker
-            })
-            cache.add(video_id)
-
-    save_cache(cache)
-
-    print(f"[RESULT] New candidates found: {len(new_candidates)}")
-
-    # Output for worker
-    print(json.dumps(new_candidates))
-
-    print("=== SAFE INGESTER COMPLETE ===")
-
-
-if __name__ == "__main__":
-    main()
+    return transcript_text
