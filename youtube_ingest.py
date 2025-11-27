@@ -3,58 +3,69 @@ from typing import List, Dict
 
 import requests
 
-from config import YOUTUBE_API_KEY
+from config import require_env
 
-# Channels Leninware originally pulled from. These came from your old repo.
+# YouTube Data API v3 key (for search + stats)
+YOUTUBE_API_KEY = require_env("YOUTUBE_API_KEY")
+
+# Channels Leninware should watch. You can edit this list as needed.
 CHANNELS = [
     "UCXIJgqnII2ZOINSWNOGFThA",  # Fox News
     "UC7yRILFFJ2zI_Ut9oZuDbWw",  # TYT
-    "UC6TmAlx4q_GU8Z1LENzOdJw",  # Misc news
     "UCaXkIU1QidjPwiAYu6GcHjg",  # MeidasTouch
-    "UCq16dvHk1FWk0TDvFu4CFOw",  # Brian Tyler Cohen
+    "UCq16dvHk1FWk0TDvFu4CFOw",  # Brian Tyler Cohen (check / adjust if needed)
     "UCZJb0pVQF8l0Zo4QCXFvSrg",  # Beau of the Fifth Column
     "UCSPIZo7bGZpL8T3cHrIu9Kw",  # LegalEagle
 ]
 
-API_URL = "https://www.googleapis.com/youtube/v3/search"
+SEARCH_API_URL = "https://www.googleapis.com/youtube/v3/search"
 
 
-def fetch_channel_videos(channel_id: str) -> list:
+def fetch_channel_videos(channel_id: str, max_results: int = 10) -> list:
+    """Fetch latest videos for a single channel using search.list.
+
+    This is the main YouTube quota cost: each call is ~100 units.
+    We do ONE call per channel per run.
     """
-    Return a list of raw video items from a YouTube channel.
-
-    This makes ONE search.list call per channel (~100 quota units).
-    """
-    if not YOUTUBE_API_KEY:
-        raise RuntimeError("YOUTUBE_API_KEY is not set in config / environment")
-
     params = {
         "key": YOUTUBE_API_KEY,
         "channelId": channel_id,
         "part": "snippet",
         "order": "date",
-        "maxResults": 20,
+        "maxResults": max_results,
         "type": "video",
     }
 
-    resp = requests.get(API_URL, params=params, timeout=20)
+    resp = requests.get(SEARCH_API_URL, params=params, timeout=20)
 
-    # If quota is exceeded, bail with a clear error instead of spamming retries.
+    # Handle quota exceeded gracefully
     if resp.status_code == 403 and "quotaExceeded" in resp.text:
-        raise RuntimeError(f"YoutubeAPI quotaExceeded for channel {channel_id}: {resp.text}")
+        print(f"[ingest] quotaExceeded when fetching channel {channel_id}")
+        return []
 
     if resp.status_code != 200:
-        raise RuntimeError(f"YoutubeAPI 403/400: {resp.text}")
+        print(f"[ingest] YouTube API error {resp.status_code} for {channel_id}: {resp.text[:200]}")
+        return []
 
-    return resp.json().get("items", [])
+    data = resp.json()
+    return data.get("items", [])
 
 
-def get_candidate_videos() -> list:
+def get_recent_candidates(max_candidates: int = 40) -> List[Dict]:
+    """Return a list of normalized candidate dicts from all configured channels.
+
+    Each candidate looks like:
+        {
+            "video_id": str,
+            "url": str,
+            "title": str,
+            "channel": str,
+            "description": str,
+            "published_at": datetime | None,
+            "score": float,   # base score before virality worker
+        }
     """
-    Fetch videos from all configured channels and flatten list.
-    Returns raw YouTube API items.
-    """
-    all_items = []
+    all_items: List[Dict] = []
 
     for cid in CHANNELS:
         try:
@@ -63,28 +74,9 @@ def get_candidate_videos() -> list:
         except Exception as e:
             print(f"[ingest] Failed to fetch for {cid}: {e}")
 
-    return all_items
-
-
-def get_recent_candidates(max_candidates: int = 40) -> List[Dict]:
-    """
-    Wrapper used by youtube_virality_worker.run_virality_pass().
-
-    Turns raw YouTube API items into a simple list of candidate dicts:
-    {
-        'video_id': str,
-        'url': str,
-        'title': str,
-        'channel': str,
-        'description': str,
-        'published_at': datetime | None,
-        'score': float,          # base score (LLM will overwrite)
-    }
-    """
-    raw_items = get_candidate_videos()
     candidates: List[Dict] = []
 
-    for item in raw_items:
+    for item in all_items:
         snippet = item.get("snippet", {})
         id_obj = item.get("id", {})
         video_id = id_obj.get("videoId")
@@ -96,7 +88,7 @@ def get_recent_candidates(max_candidates: int = 40) -> List[Dict]:
         published_at = None
         if published_at_str:
             try:
-                # "2025-11-27T09:21:28Z" → aware datetime
+                # Example: 2025-11-27T09:21:28Z
                 published_at = dt.datetime.fromisoformat(
                     published_at_str.replace("Z", "+00:00")
                 )
@@ -106,19 +98,19 @@ def get_recent_candidates(max_candidates: int = 40) -> List[Dict]:
         candidate = {
             "video_id": video_id,
             "url": f"https://www.youtube.com/watch?v={video_id}",
-            "title": snippet.get("title", ""),
-            "channel": snippet.get("channelTitle", ""),
-            "description": snippet.get("description", ""),
+            "title": snippet.get("title", "") or "",
+            "channel": snippet.get("channelTitle", "") or "",
+            "description": snippet.get("description", "") or "",
             "published_at": published_at,
-            # Starting score – youtube_virality_worker will compute the real score
+            # Starting score – youtube_virality_worker will compute the real score.
             "score": 0.0,
         }
         candidates.append(candidate)
 
-    # Newest videos first, if we have timestamps
-    def _sort_key(c):
+    # Newest videos first
+    def _sort_key(c: Dict) -> dt.datetime:
         if c["published_at"] is None:
-            # Ancient past if unknown, so they end up last
+            # Oldest if unknown
             return dt.datetime.min.replace(tzinfo=dt.timezone.utc)
         return c["published_at"]
 
@@ -127,5 +119,5 @@ def get_recent_candidates(max_candidates: int = 40) -> List[Dict]:
     if max_candidates and len(candidates) > max_candidates:
         candidates = candidates[:max_candidates]
 
-    print(f"[worker] Found {len(candidates)} candidates")
+    print(f"[ingest] Found {len(candidates)} candidates")
     return candidates
