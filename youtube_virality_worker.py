@@ -1,124 +1,133 @@
 # youtube_virality_worker.py
 
-import os
 import logging
 import math
-import requests
 from typing import List, Dict, Any
+
+import requests
+
 from youtube_ingest import get_recent_candidates
+from config import require_env
 
 logger = logging.getLogger(__name__)
 
-YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
-YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3/videos"
+YOUTUBE_API_KEY = require_env("YOUTUBE_API_KEY")
+VIDEOS_API_URL = "https://www.googleapis.com/youtube/v3/videos"
 
 # Tunables
-MAX_CANDIDATES_PER_RUN = 30
-VIRALITY_THRESHOLD = 5.5       # Lowered so we get real output
-MAX_FINAL_RESULTS = 3          # Don’t overwhelm your pipeline
+MAX_CANDIDATES_PER_RUN = 30     # Max from ingest we will score
+VIRALITY_THRESHOLD = 5.5        # 0–10; lower to allow more through
+MAX_FINAL_RESULTS = 3           # Number of top videos to forward
 
 
-def fetch_stats(video_ids: List[str]) -> Dict[str, Dict[str, Any]]:
-    """
-    Fetch statistics for a batch of video IDs in ONE API call.
-    """
-    if not YOUTUBE_API_KEY:
-        logger.error("Missing YOUTUBE_API_KEY")
+def _fetch_stats(video_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    """Fetch views/likes/comments for a batch of video IDs in ONE API call."""
+    if not video_ids:
         return {}
 
     params = {
-        "key": YOUTUBE_API_KEY,
-        "part": "statistics,snippet",
+        "part": "statistics",
         "id": ",".join(video_ids),
+        "key": YOUTUBE_API_KEY,
     }
 
     try:
-        resp = requests.get(YOUTUBE_API_BASE, params=params, timeout=20)
+        resp = requests.get(VIDEOS_API_URL, params=params, timeout=20)
         resp.raise_for_status()
     except Exception as e:
-        logger.error(f"YouTube stats error: {e}")
+        logger.error(f"[virality] YouTube stats error: {e}")
         return {}
 
     data = resp.json()
-    out = {}
+    out: Dict[str, Dict[str, Any]] = {}
 
     for item in data.get("items", []):
         vid = item.get("id")
-        if vid:
-            out[vid] = {
-                "views": int(item["statistics"].get("viewCount", 0)),
-                "likes": int(item["statistics"].get("likeCount", 0)),
-                "comments": int(item["statistics"].get("commentCount", 0)),
-                "published_at": item["snippet"].get("publishedAt"),
-            }
+        stats = item.get("statistics", {}) or {}
+        if not vid:
+            continue
+        try:
+            views = int(stats.get("viewCount", 0))
+            likes = int(stats.get("likeCount", 0))
+            comments = int(stats.get("commentCount", 0))
+        except Exception:
+            views = likes = comments = 0
+
+        out[vid] = {
+            "views": views,
+            "likes": likes,
+            "comments": comments,
+        }
 
     return out
 
 
-def score_candidate(c: Dict[str, Any], stats: Dict[str, Any]) -> float:
-    """
-    Simple, effective, engagement-driven virality score: 0–10
-    """
+def _score_candidate(stats: Dict[str, Any]) -> float:
+    """Compute a simple 0–10 virality score from basic stats."""
     views = stats["views"]
     likes = stats["likes"]
     comments = stats["comments"]
 
-    like_ratio = (likes / views) if views > 0 else 0
-    comment_ratio = (comments / views) if views > 0 else 0
+    like_ratio = (likes / views) if views > 0 else 0.0
+    comment_ratio = (comments / views) if views > 0 else 0.0
 
-    # Log scaling keeps things sane
+    # Log scaling for stability
     views_term = math.log10(views + 1) * 2.2
-    velocity_term = math.log10((likes + comments + 1)) * 1.6
+    engagement_term = math.log10(likes + comments + 1) * 1.8
+    social_term = like_ratio * 4.5 + comment_ratio * 7.0
 
-    engagement = (like_ratio * 4.5) + (comment_ratio * 7)
-
-    total = views_term + velocity_term + engagement
-    total = max(0, min(10, total))
-
-    return round(total, 2)
+    score = views_term + engagement_term + social_term
+    score = max(0.0, min(10.0, score))
+    return round(score, 2)
 
 
 def run_virality_pass() -> List[Dict[str, Any]]:
-    """
-    MAIN ENTRY POINT (called by main.py)
-    No arguments allowed — must pull candidates internally.
+    """Main entrypoint called by main.py.
+
+    - Fetches recent candidates from ingest
+    - Fetches stats for each
+    - Computes virality scores
+    - Returns a small list of top candidates
     """
     candidates = get_recent_candidates()
 
     if not candidates:
-        logger.info("[virality] No candidates found.")
+        logger.info("[virality] No candidates from ingest.")
         return []
 
-    # Limit the number we score
+    # Trim to a safe number before stats fetch
     candidates = candidates[:MAX_CANDIDATES_PER_RUN]
 
     video_ids = [c["video_id"] for c in candidates]
-    stats_map = fetch_stats(video_ids)
+    stats_map = _fetch_stats(video_ids)
 
-    scored = []
+    scored: List[Dict[str, Any]] = []
+
     for c in candidates:
         vid = c["video_id"]
         stats = stats_map.get(vid)
         if not stats:
             continue
 
-        vscore = score_candidate(c, stats)
-        c["virality_score"] = vscore
-        c["statistics"] = stats
+        vscore = _score_candidate(stats)
+        enriched = dict(c)
+        enriched["virality_score"] = vscore
+        enriched["statistics"] = stats
+        scored.append(enriched)
 
-        if vscore >= VIRALITY_THRESHOLD:
-            scored.append(c)
+    # Filter by threshold
+    passed = [c for c in scored if c["virality_score"] >= VIRALITY_THRESHOLD]
 
-    # Sort by highest virality
-    scored.sort(key=lambda x: x["virality_score"], reverse=True)
+    # Sort descending
+    passed.sort(key=lambda x: x["virality_score"], reverse=True)
 
-    # Only pass best few to avoid overloading the pipeline
-    final = scored[:MAX_FINAL_RESULTS]
+    final = passed[:MAX_FINAL_RESULTS]
 
     logger.info(
-        "[virality] %d candidates in → %d passed threshold → %d forwarded",
+        "[virality] %d candidates scored, %d passed threshold %.2f, %d forwarded",
         len(candidates),
-        len(scored),
+        len(passed),
+        VIRALITY_THRESHOLD,
         len(final),
     )
 
