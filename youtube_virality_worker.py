@@ -2,56 +2,41 @@
 
 import os
 import logging
-import re
-from typing import Dict, List, Any
+import math
 import requests
-from youtube_ingest import get_recent_candidates   # IMPORTANT: matches your old pipeline
+from typing import List, Dict, Any
+from youtube_ingest import get_recent_candidates
 
 logger = logging.getLogger(__name__)
 
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
-YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
+YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3/videos"
 
-# Hard caps to protect quota
-MAX_CANDIDATES_PER_RUN = 20
-VIRALITY_THRESHOLD = 6.0
-
-
-def _extract_video_id(url: str) -> str:
-    if re.fullmatch(r"[a-zA-Z0-9_-]{11}", url):
-        return url
-
-    m = re.search(r"[?&]v=([a-zA-Z0-9_-]{11})", url)
-    if m:
-        return m.group(1)
-
-    m = re.search(r"youtu\.be/([a-zA-Z0-9_-]{11})", url)
-    if m:
-        return m.group(1)
-
-    return url
+# Tunables
+MAX_CANDIDATES_PER_RUN = 30
+VIRALITY_THRESHOLD = 5.5       # Lowered so we get real output
+MAX_FINAL_RESULTS = 3          # Don’t overwhelm your pipeline
 
 
-def _fetch_stats(video_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+def fetch_stats(video_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    """
+    Fetch statistics for a batch of video IDs in ONE API call.
+    """
     if not YOUTUBE_API_KEY:
-        logger.error("YOUTUBE_API_KEY not set")
+        logger.error("Missing YOUTUBE_API_KEY")
         return {}
 
     params = {
-        "part": "statistics",
-        "id": ",".join(video_ids),
         "key": YOUTUBE_API_KEY,
+        "part": "statistics,snippet",
+        "id": ",".join(video_ids),
     }
 
     try:
-        resp = requests.get(
-            f"{YOUTUBE_API_BASE}/videos",
-            params=params,
-            timeout=15,
-        )
+        resp = requests.get(YOUTUBE_API_BASE, params=params, timeout=20)
         resp.raise_for_status()
     except Exception as e:
-        logger.error("YouTube stats fetch error: %s", e)
+        logger.error(f"YouTube stats error: {e}")
         return {}
 
     data = resp.json()
@@ -60,74 +45,81 @@ def _fetch_stats(video_ids: List[str]) -> Dict[str, Dict[str, Any]]:
     for item in data.get("items", []):
         vid = item.get("id")
         if vid:
-            out[vid] = item.get("statistics", {})
+            out[vid] = {
+                "views": int(item["statistics"].get("viewCount", 0)),
+                "likes": int(item["statistics"].get("likeCount", 0)),
+                "comments": int(item["statistics"].get("commentCount", 0)),
+                "published_at": item["snippet"].get("publishedAt"),
+            }
 
     return out
 
 
-def _score(candidate: Dict[str, Any], stats: Dict[str, Any]) -> float:
-    try:
-        views = int(stats.get("viewCount", 0))
-        likes = int(stats.get("likeCount", 0))
-        comments = int(stats.get("commentCount", 0))
-    except:
-        views = likes = comments = 0
+def score_candidate(c: Dict[str, Any], stats: Dict[str, Any]) -> float:
+    """
+    Simple, effective, engagement-driven virality score: 0–10
+    """
+    views = stats["views"]
+    likes = stats["likes"]
+    comments = stats["comments"]
 
-    base = float(candidate.get("score", 0))
-    like_ratio = likes / views if views > 0 else 0
-    comment_ratio = comments / views if views > 0 else 0
+    like_ratio = (likes / views) if views > 0 else 0
+    comment_ratio = (comments / views) if views > 0 else 0
 
-    return base + (like_ratio * 10) + (comment_ratio * 20)
+    # Log scaling keeps things sane
+    views_term = math.log10(views + 1) * 2.2
+    velocity_term = math.log10((likes + comments + 1)) * 1.6
+
+    engagement = (like_ratio * 4.5) + (comment_ratio * 7)
+
+    total = views_term + velocity_term + engagement
+    total = max(0, min(10, total))
+
+    return round(total, 2)
 
 
 def run_virality_pass() -> List[Dict[str, Any]]:
     """
-    IMPORTANT:
-    main.py calls run_virality_pass() with NO arguments.
-    So we must obtain the candidates internally (like your original pipeline).
+    MAIN ENTRY POINT (called by main.py)
+    No arguments allowed — must pull candidates internally.
     """
-
     candidates = get_recent_candidates()
 
     if not candidates:
-        logger.info("[virality] No candidates returned by ingester")
+        logger.info("[virality] No candidates found.")
         return []
 
-    # Limit candidates to keep quota safe
-    candidates = sorted(
-        candidates,
-        key=lambda c: c.get("score", 0),
-        reverse=True,
-    )[:MAX_CANDIDATES_PER_RUN]
+    # Limit the number we score
+    candidates = candidates[:MAX_CANDIDATES_PER_RUN]
 
-    video_ids = []
-    for c in candidates:
-        vid = _extract_video_id(c.get("url", ""))
-        c["video_id"] = vid
-        video_ids.append(vid)
-
-    stats = _fetch_stats(video_ids)
+    video_ids = [c["video_id"] for c in candidates]
+    stats_map = fetch_stats(video_ids)
 
     scored = []
     for c in candidates:
         vid = c["video_id"]
-        if vid not in stats:
+        stats = stats_map.get(vid)
+        if not stats:
             continue
 
-        viral_score = _score(c, stats[vid])
-        c["virality_score"] = viral_score
-        c["statistics"] = stats[vid]
+        vscore = score_candidate(c, stats)
+        c["virality_score"] = vscore
+        c["statistics"] = stats
 
-        if viral_score >= VIRALITY_THRESHOLD:
+        if vscore >= VIRALITY_THRESHOLD:
             scored.append(c)
 
-    scored.sort(key=lambda c: c["virality_score"], reverse=True)
+    # Sort by highest virality
+    scored.sort(key=lambda x: x["virality_score"], reverse=True)
+
+    # Only pass best few to avoid overloading the pipeline
+    final = scored[:MAX_FINAL_RESULTS]
 
     logger.info(
-        "[virality] %d candidates in → %d passed threshold %.2f",
+        "[virality] %d candidates in → %d passed threshold → %d forwarded",
         len(candidates),
         len(scored),
-        VIRALITY_THRESHOLD,
+        len(final),
     )
 
-    return scored
+    return final
