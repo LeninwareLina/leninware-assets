@@ -1,3 +1,4 @@
+#config.py
 import os
 
 
@@ -13,6 +14,14 @@ def require_env(name: str) -> str:
 #   Set USE_MOCK_AI=true in Railway to use mock mode.
 # ---------------------------------------------------------
 USE_MOCK_AI = os.getenv("USE_MOCK_AI", "false").lower() == "true"
+
+
+# ---------------------------------------------------------
+#   YOUTUBE UPLOAD TOGGLE
+#   Prevents accidental posting of videos.
+#   ENABLE_YOUTUBE_UPLOAD=true → allow final upload.
+# ---------------------------------------------------------
+ENABLE_YOUTUBE_UPLOAD = os.getenv("ENABLE_YOUTUBE_UPLOAD", "false").lower() == "true"
 
 
 # ---------------------------------------------------------
@@ -47,7 +56,7 @@ else:
 
 # ---------------------------------------------------------
 #   YouTube Upload (OAuth)
-#   Corrected variable names (your original ones were wrong)
+#   Correct variable names
 # ---------------------------------------------------------
 if USE_MOCK_AI:
     YOUTUBE_CLIENT_ID = "mock"
