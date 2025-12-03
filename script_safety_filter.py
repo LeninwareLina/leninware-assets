@@ -11,10 +11,16 @@ SAFETY_PROMPT_PATH = Path("prompts/script_safety_filter.txt")
 
 
 def _load_safety_prompt() -> str:
+    """Load safety rules with debug logging."""
     if SAFETY_PROMPT_PATH.exists():
-        return SAFETY_PROMPT_PATH.read_text(encoding="utf-8")
+        print(f"[safety_filter] Loading safety rules from {SAFETY_PROMPT_PATH}")
+        text = SAFETY_PROMPT_PATH.read_text(encoding="utf-8").strip()
+        if not text:
+            print("[safety_filter] WARNING: Safety prompt file is empty!")
+        return text
 
-    # Default fallback rules
+    print("[safety_filter] WARNING: No custom safety rules found. Using built-in defaults.")
+
     return (
         "You are a safety post-processor for a political commentary script. "
         "Your job is to make the script compliant with platform safety rules "
@@ -30,20 +36,25 @@ def apply_script_safety_filter(raw_script: str) -> str:
     """Apply post-processing to keep the script compliant while preserving tone."""
 
     raw_script = (raw_script or "").strip()
+
+    print(f"[safety_filter] Received script length: {len(raw_script)} chars")
+
     if not raw_script:
+        print("[safety_filter] EMPTY SCRIPT — Skipping safety filter.")
         return raw_script
 
     # ----------------------------------------------------
-    # MOCK MODE → Do not rewrite anything
+    # MOCK MODE
     # ----------------------------------------------------
     if USE_MOCK_AI:
-        # In mock mode, return the script unchanged.
-        # We do NOT censor political content in mock mode.
+        print("[safety_filter] MOCK MODE — Returning script unchanged.")
         return raw_script
 
     # ----------------------------------------------------
-    # REAL MODE → Call OpenAI to refine the script safely
+    # REAL MODE
     # ----------------------------------------------------
+    print("[safety_filter] REAL MODE — Applying OpenAI safety filter...")
+
     api_key = require_env("OPENAI_API_KEY")
     client = OpenAI(api_key=api_key)
 
@@ -57,14 +68,28 @@ def apply_script_safety_filter(raw_script: str) -> str:
         "<<<END_SCRIPT>>>"
     )
 
-    resp = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user",  "content": user_content},
-        ],
-        max_tokens=1200,
-        temperature=0.4,
-    )
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user",  "content": user_content},
+            ],
+            max_tokens=1200,
+            temperature=0.4,
+        )
 
-    return (resp.choices[0].message.content or "").strip()
+        safe = (resp.choices[0].message.content or "").strip()
+
+        print(
+            f"[safety_filter] Finished. "
+            f"Output length: {len(safe)} chars "
+            f"(delta: {len(safe) - len(raw_script)})"
+        )
+
+        return safe
+
+    except Exception as e:
+        print("[safety_filter] ERROR calling OpenAI safety filter:", e)
+        print("[safety_filter] FALLBACK — Returning raw script unchanged.")
+        return raw_script
