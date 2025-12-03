@@ -1,5 +1,6 @@
 # main.py
 
+from youtube_ingest import get_recent_candidates
 from youtube_virality_worker import run_virality_pass
 from transcript_fetcher import fetch_transcript
 
@@ -10,82 +11,122 @@ from storyboard_prompt_generator import generate_storyboard_prompts
 from safe_image_prompt_filter import apply_safe_substitutions
 from image_generator import generate_images_from_prompts
 
+from audio_generator import generate_tts_audio
 from leninware_video_pipeline import create_leninware_video
+
 from youtube_uploader import upload_video
 
 
 def main():
-    print("\n=== Leninware Pipeline Starting ===\n")
+    print("\n===== Leninware Pipeline Starting =====\n")
 
-    # 1. Get viral candidates
-    candidates = run_virality_pass()
+    # ---------------------------------------------------
+    # 1. INGEST RECENT VIDEOS (SHORTS FILTER APPLIED)
+    # ---------------------------------------------------
+    print("[main] Fetching recent candidates...")
+    candidates = get_recent_candidates(max_results=5)
+
     if not candidates:
-        print("[main] No viral videos found.")
+        print("[main] No recent long-form videos found.")
         return
 
-    candidate = candidates[0]
-    url = candidate.get("url")
-    title = candidate.get("title", "Untitled Video")
-    channel = candidate.get("channel", "Unknown Channel")
+    # ---------------------------------------------------
+    # 2. VIRALITY RANKING
+    # ---------------------------------------------------
+    print("[main] Running virality pass...")
+    viral_list = run_virality_pass(candidates)
 
-    print(f"[main] Selected candidate:")
-    print(f"   Title: {title}")
-    print(f"   Channel: {channel}")
-    print(f"   URL: {url}")
-
-    # 2. Transcript
-    print("\n[main] Fetching transcript...")
-    transcript = fetch_transcript(url)
-    if not transcript:
-        print("[main] Transcript not available. Skipping.")
+    if not viral_list:
+        print("[main] No videos with usable stats.")
         return
 
-    # 3. Leninware commentary
-    print("\n[main] Generating Leninware commentary...")
-    raw_commentary = generate_leninware_commentary(transcript)
+    print("\n[main] Virality ranking:")
+    for v in viral_list:
+        print(f"  {v['title']} — score={v['virality']}")
 
-    # 4. Safety filter for narration
-    print("\n[main] Running script safety filter...")
-    safe_commentary = apply_script_safety_filter(raw_commentary)
+    # ---------------------------------------------------
+    # 3. FIND FIRST VIDEO WITH AVAILABLE TRANSCRIPT
+    # ---------------------------------------------------
+    selected = None
+    transcript_text = None
 
-    # 5. Storyboard prompts (GPT-mini)
-    print("\n[main] Generating storyboard prompts...")
-    storyboard_prompts = generate_storyboard_prompts(
-        safe_commentary,
-        num_images=8,
-    )
+    for v in viral_list:
+        print(f"\n[main] Checking transcript availability for: {v['title']}")
+        tr = fetch_transcript(v["video_id"])
+        if tr:
+            transcript_text = tr
+            selected = v
+            break
 
-    # 6. Apply substitution rules (YouTube-safe tweaks)
-    print("\n[main] Applying substitution rules to prompts...")
-    final_prompts = apply_safe_substitutions(storyboard_prompts)
+    if not selected:
+        print("[main] No videos with available transcripts.")
+        return
 
-    # 7. Generate images
-    print("\n[main] Generating images from storyboard prompts...")
-    image_paths = generate_images_from_prompts(final_prompts)
+    print(f"\n[main] Selected video:\n    Title: {selected['title']}\n    URL: {selected['url']}\n")
 
-    # 8. Create video via TTS + Shotstack
-    print("\n[main] Creating final video...")
+    # ---------------------------------------------------
+    # 4. LENINWARE COMMENTARY
+    # ---------------------------------------------------
+    print("[main] Generating Leninware commentary...")
+    raw_commentary = generate_leninware_commentary(transcript_text)
+
+    # ---------------------------------------------------
+    # 5. SAFETY FILTER
+    # ---------------------------------------------------
+    print("[main] Applying script safety filter...")
+    safe_script = apply_script_safety_filter(raw_commentary)
+
+    # ---------------------------------------------------
+    # 6. STORYBOARD PROMPTS
+    # ---------------------------------------------------
+    print("[main] Generating storyboard prompts...")
+    storyboard_prompts = generate_storyboard_prompts(safe_script)
+
+    print("[main] Applying substitution safety filter...")
+    safe_prompts = apply_safe_substitutions(storyboard_prompts)
+
+    # ---------------------------------------------------
+    # 7. IMAGE GENERATION
+    # ---------------------------------------------------
+    print("[main] Generating images from prompts...")
+    image_paths = generate_images_from_prompts(safe_prompts)
+
+    # ---------------------------------------------------
+    # 8. AUDIO (TTS)
+    # ---------------------------------------------------
+    print("[main] Generating TTS audio...")
+    audio_path = generate_tts_audio(safe_script)
+
+    # ---------------------------------------------------
+    # 9. SHOTSTACK VIDEO RENDER
+    # ---------------------------------------------------
+    print("[main] Rendering final Leninware video...")
     video_path = create_leninware_video(
-        safe_script_text=safe_commentary,
+        script_text=safe_script,
         image_paths=image_paths,
+        audio_path=audio_path
     )
 
-    # 9. Upload to YouTube
-    print("\n[main] Uploading video to YouTube...")
-    upload_title = f"Leninware reacts: {title}"
+    print(f"[main] Render complete: {video_path}")
+
+    # ---------------------------------------------------
+    # 10. UPLOAD TO YOUTUBE
+    # ---------------------------------------------------
+    upload_title = f"Leninware Reacts: {selected['title']}"
     upload_description = (
-        f"Automated Leninware commentary on '{title}' "
-        f"from channel '{channel}'.\n\n"
+        f"Automated Leninware reaction to: {selected['title']}\n"
+        f"Original video: {selected['url']}\n\n"
         "Generated by Leninware AI."
     )
 
+    print("[main] Uploading to YouTube...")
     upload_video(
         video_path,
         title=upload_title,
         description=upload_description,
     )
 
-    print("\n=== Leninware Pipeline Complete ===\n")
+    print("\n===== Leninware Pipeline Complete =====\n")
 
 
 if __name__ == "__main__":
