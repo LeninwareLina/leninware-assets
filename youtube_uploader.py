@@ -16,9 +16,11 @@ TOKEN_URI = "https://oauth2.googleapis.com/token"
 
 def _get_youtube_client():
     """Build an authenticated YouTube client using OAuth refresh token."""
-    client_id = require_env("YOUTUBE_UPLOAD_CLIENT_ID")
-    client_secret = require_env("YOUTUBE_UPLOAD_CLIENT_SECRET")
-    refresh_token = require_env("YOUTUBE_UPLOAD_REFRESH_TOKEN")
+
+    # ✔ FIXED: match config.py variable names exactly
+    client_id = require_env("GOOGLE_CLIENT_ID")
+    client_secret = require_env("GOOGLE_CLIENT_SECRET")
+    refresh_token = require_env("GOOGLE_REFRESH_TOKEN")
 
     creds = Credentials(
         token=None,
