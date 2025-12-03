@@ -14,11 +14,25 @@ SPEED = 1.2  # 1.2x speed
 
 
 def generate_tts_audio(text: str, output_path: str) -> str:
-    """Generate TTS audio using OpenAI's speech API.
+    """Generate TTS audio (real or mock)."""
 
-    Returns:
-        Path to the generated audio file.
-    """
+    if USE_MOCK_AI:
+        # ----------------------------------------------------
+        # MOCK MODE → generate a tiny silent WAV file (free)
+        # ----------------------------------------------------
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+        with wave.open(output_path, "w") as wav:
+            wav.setnchannels(1)
+            wav.setsampwidth(2)  # 16-bit
+            wav.setframerate(16000)
+            wav.writeframes(b"\x00\x00" * 4000)  # 0.25s silence
+
+        return output_path
+
+    # ----------------------------------------------------
+    # REAL TTS MODE → uses OpenAI API (costs money)
+    # ----------------------------------------------------
     if not text or not text.strip():
         raise ValueError("Empty transcript passed to TTS")
 
@@ -34,11 +48,9 @@ def generate_tts_audio(text: str, output_path: str) -> str:
         input=text,
     )
 
-    # In current OpenAI client, write_to_file is usually available
     if hasattr(response, "write_to_file"):
         response.write_to_file(output_path)
     else:
-        # Fallback: assume file-like object with .read()
         with open(output_path, "wb") as f:
             f.write(response.read())
 
