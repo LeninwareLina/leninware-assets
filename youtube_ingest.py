@@ -5,10 +5,9 @@ from pathlib import Path
 from typing import List, Dict
 import requests
 
-from config import YOUTUBE_API_KEY
+from config import USE_MOCK_AI, YOUTUBE_API_KEY
 
 CHANNELS_FILE = Path("prompts/youtube_channels.txt")
-
 CHANNEL_URL_RE = re.compile(r"/channel/([A-Za-z0-9_-]+)")
 
 
@@ -49,8 +48,7 @@ def _get_video_duration(video_id: str) -> int:
         return 0
 
     iso = items[0]["contentDetails"]["duration"]
-    # Convert ISO-8601 duration (PT#M#S) to seconds
-    # Example: PT12S, PT1M12S, PT2M.
+
     import isodate
     try:
         duration = isodate.parse_duration(iso).total_seconds()
@@ -61,10 +59,29 @@ def _get_video_duration(video_id: str) -> int:
 
 def get_recent_candidates(max_results: int = 5) -> List[Dict]:
     """
-    Fetches only NORMAL videos (no Shorts).
-    Returns list of dictionaries with video metadata.
+    Returns list of video candidates.
+    MOCK MODE: Generates fake long-form videos to avoid API cost.
     """
 
+    # ----------------------------------------------------
+    # MOCK MODE — produce fake ingest results
+    # ----------------------------------------------------
+    if USE_MOCK_AI:
+        print("[ingest:mock] Returning mock YouTube videos.")
+        return [
+            {
+                "video_id": f"mockvideo{i}",
+                "title": f"Mock Video #{i}",
+                "channel": "Mock Channel",
+                "duration_s": 300 + i * 10,  # 5–6 min mock videos
+                "url": f"https://www.youtube.com/watch?v=mockvideo{i}",
+            }
+            for i in range(1, max_results + 1)
+        ]
+
+    # ----------------------------------------------------
+    # REAL MODE — Call YouTube API
+    # ----------------------------------------------------
     channel_ids = load_channel_ids()
     candidates = []
 
@@ -89,7 +106,7 @@ def get_recent_candidates(max_results: int = 5) -> List[Dict]:
             channel = item["snippet"]["channelTitle"]
             url = f"https://www.youtube.com/watch?v={video_id}"
 
-            # Filter Shorts by duration
+            # Filter out Shorts
             dur_s = _get_video_duration(video_id)
             if dur_s < 60:
                 print(f"[ingest] Skipping short: '{title}' ({dur_s}s)")
