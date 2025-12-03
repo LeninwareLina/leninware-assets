@@ -45,3 +45,5 @@ YOUTUBE_REFRESH_TOKEN = require_env("GOOGLE_REFRESH_TOKEN")
 # -------------------------
 SHOTSTACK_API_KEY = require_env("SHOTSTACK_API_KEY")
 SHOTSTACK_API_URL = "https://api.shotstack.io/v1/render"
+
+USE_MOCK_AI = True
