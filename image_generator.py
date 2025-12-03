@@ -1,10 +1,10 @@
 # image_generator.py
 import os
+import base64
 from openai import OpenAI
 from config import require_env
 
-
-MODEL = "gpt-image-1"  # Or whatever model you prefer
+MODEL = "gpt-image-1"  # or whichever model you're using
 
 
 def generate_images_from_prompts(prompts: list[str]) -> list[str]:
@@ -31,7 +31,6 @@ def generate_images_from_prompts(prompts: list[str]) -> list[str]:
                 size="1024x1024"
             )
 
-            # Extract base64 data
             image_base64 = resp.data[0].b64_json
 
             img_path = os.path.join(output_dir, f"frame_{i}.png")
@@ -41,7 +40,7 @@ def generate_images_from_prompts(prompts: list[str]) -> list[str]:
             image_paths.append(img_path)
 
         except Exception as e:
-            # Only error printed
+            # Only error printed to logs
             print(f"[image_generator] Error on prompt {i}: {e}")
 
     return image_paths
