@@ -1,3 +1,5 @@
+# main.py
+
 from youtube_ingest import get_recent_candidates
 from youtube_virality_worker import run_virality_pass
 from transcript_fetcher import fetch_transcript
@@ -93,7 +95,9 @@ def main():
     print(f"[main] Render complete: {video_path}")
 
     # 11. UPLOAD
-    if not ENABLE_YOUTUBE_UPLOAD:
+    if USE_MOCK_AI:
+        print("[main] (11) MOCK MODE — upload disabled automatically.")
+    elif not ENABLE_YOUTUBE_UPLOAD:
         print("[main] (11) Upload disabled — skipping YouTube upload.")
     else:
         print("[main] (11) Uploading to YouTube...")
