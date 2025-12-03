@@ -6,7 +6,7 @@ from config import require_env
 
 # TTS model + voice config
 MODEL = "gpt-4o-mini-tts"
-VOICE = "michelle"
+VOICE = "marin"
 SPEED = 1.2  # 1.2x speed
 
 
