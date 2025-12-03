@@ -1,35 +1,47 @@
 # image_generator.py
-
-from pathlib import Path
-from typing import List
-import base64
+import os
 from openai import OpenAI
 from config import require_env
 
-OUTPUT_DIR = Path("generated_images")
-OUTPUT_DIR.mkdir(exist_ok=True)
 
-def generate_images_from_prompts(prompts: List[str]) -> List[str]:
+MODEL = "gpt-image-1"  # Or whatever model you prefer
+
+
+def generate_images_from_prompts(prompts: list[str]) -> list[str]:
+    """Generate images silently from a list of prompts.
+       Returns a list of saved file paths.
+    """
+
+    if not prompts:
+        raise ValueError("No prompts passed to image generator")
+
     api_key = require_env("OPENAI_API_KEY")
     client = OpenAI(api_key=api_key)
 
-    paths = []
+    output_dir = "output/images"
+    os.makedirs(output_dir, exist_ok=True)
+
+    image_paths = []
+
     for i, prompt in enumerate(prompts, start=1):
-        print(f"[images] Generating image {i}/{len(prompts)}")
-        print(prompt)
+        try:
+            resp = client.images.generate(
+                model=MODEL,
+                prompt=prompt,
+                size="1024x1024"
+            )
 
-        resp = client.images.generate(
-            model="gpt-image-1",
-            prompt=prompt,
-            size="1024x1024",
-            n=1,
-        )
+            # Extract base64 data
+            image_base64 = resp.data[0].b64_json
 
-        b64 = resp.data[0].b64_json
-        img = base64.b64decode(b64)
+            img_path = os.path.join(output_dir, f"frame_{i}.png")
+            with open(img_path, "wb") as img_file:
+                img_file.write(base64.b64decode(image_base64))
 
-        path = OUTPUT_DIR / f"storyboard_{i}.png"
-        path.write_bytes(img)
-        paths.append(str(path))
+            image_paths.append(img_path)
 
-    return paths
+        except Exception as e:
+            # Only error printed
+            print(f"[image_generator] Error on prompt {i}: {e}")
+
+    return image_paths
