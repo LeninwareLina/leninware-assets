@@ -1,42 +1,31 @@
 # safe_image_prompt_filter.py
 
 from pathlib import Path
+from typing import List
 
 RULES_PATH = Path("prompts/safe_substitution_rules.txt")
 
-
-def _load_rules():
-    """
-    Load simple substitution rules from prompts/safe_substitution_rules.txt
-
-    Format per line:
-    bad_phrase => safe_phrase
-    """
-    rules = []
+def _load_rules() -> List[tuple[str, str]]:
     if not RULES_PATH.exists():
-        return rules
-
-    for line in RULES_PATH.read_text(encoding="utf-8").splitlines():
+        return []
+    rules = []
+    for line in RULES_PATH.read_text().splitlines():
         line = line.strip()
-        if not line or line.startswith("#") or "=>" not in line:
+        if not line or line.startswith("#"):
             continue
-        bad, safe = [part.strip() for part in line.split("=>", 1)]
-        if bad and safe:
-            rules.append((bad, safe))
+        if "=>" not in line:
+            continue
+        before, after = line.split("=>", 1)
+        rules.append((before.strip(), after.strip()))
     return rules
 
-
-_RULES = _load_rules()
-
-
-def apply_safe_substitutions(text: str) -> str:
-    """
-    Apply substitution rules to prompts to reduce safety triggers.
-    """
-    if not text or not _RULES:
-        return text
-
-    out = text
-    for bad, safe in _RULES:
-        out = out.replace(bad, safe)
-    return out
+def apply_safe_substitutions(prompts: List[str]) -> List[str]:
+    rules = _load_rules()
+    if not rules:
+        return prompts
+    safe = []
+    for p in prompts:
+        for before, after in rules:
+            p = p.replace(before, after)
+        safe.append(p)
+    return safe
