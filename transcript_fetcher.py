@@ -2,15 +2,15 @@
 
 import re
 import requests
-from config import TRANSCRIPT_API_KEY
-
+from config import USE_MOCK_AI, TRANSCRIPT_API_KEY
 
 TRANSCRIPT_API_URL = "https://transcriptapi.com/api/v2/youtube/transcript"
 
 
 def _extract_video_id(url_or_id: str) -> str:
     """
-    Extracts YouTube video ID from URLs or returns a raw ID.
+    Extracts a YouTube ID from many common URL formats.
+    If no pattern matches, returns the raw value.
     """
     patterns = [
         r"v=([A-Za-z0-9_-]{6,})",
@@ -21,26 +21,37 @@ def _extract_video_id(url_or_id: str) -> str:
         m = re.search(p, url_or_id)
         if m:
             return m.group(1)
-
-    # Assume raw ID
     return url_or_id.strip()
 
 
 def fetch_transcript(video_url_or_id: str) -> str | None:
     """
-    Fetches the transcript text from transcriptAPI.com.
-    Returns None if unavailable or if API returns an error.
+    Fetch transcript from transcriptAPI.com.
+    In MOCK MODE, returns a fixed dummy transcript instead of calling API.
     """
 
     video_id = _extract_video_id(video_url_or_id)
 
+    # ----------------------------------------------------
+    # MOCK MODE — return free dummy transcript
+    # ----------------------------------------------------
+    if USE_MOCK_AI:
+        return (
+            "This is a mock transcript for video ID "
+            f"{video_id}. It simulates a real transcript so "
+            "the pipeline can run without using TranscriptAPI."
+        )
+
+    # ----------------------------------------------------
+    # REAL MODE — call transcriptAPI.com
+    # ----------------------------------------------------
     headers = {
         "Authorization": f"Bearer {TRANSCRIPT_API_KEY}"
     }
 
     params = {
-        "video_url": video_id,     # they accept raw ID
-        "format": "json"
+        "video_url": video_id,
+        "format": "json",
     }
 
     try:
@@ -48,7 +59,7 @@ def fetch_transcript(video_url_or_id: str) -> str | None:
             TRANSCRIPT_API_URL,
             params=params,
             headers=headers,
-            timeout=30
+            timeout=30,
         )
 
         if resp.status_code != 200:
@@ -57,21 +68,20 @@ def fetch_transcript(video_url_or_id: str) -> str | None:
 
         data = resp.json()
 
-        # Official docs: transcript = data['transcript']
         transcript = data.get("transcript")
         if not transcript:
             print("[transcript] Transcript not available.")
             return None
 
-        # transcript is a list of chunks: [{text, start, duration}, ...]
+        # transcriptAPI normally returns a list of chunks
         if isinstance(transcript, list):
-            return " ".join([chunk.get("text", "") for chunk in transcript])
+            return " ".join(chunk.get("text", "") for chunk in transcript)
 
-        # Or a raw string (rare)
+        # Rare: raw string
         if isinstance(transcript, str):
             return transcript
 
-        print("[transcript] Unexpected response format.")
+        print("[transcript] Unexpected transcript format.")
         return None
 
     except Exception as e:
