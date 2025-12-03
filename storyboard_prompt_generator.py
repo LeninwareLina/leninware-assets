@@ -36,22 +36,26 @@ Return a numbered list of prompts ONLY.
 
 def generate_storyboard_prompts(script_text: str, num_images: int = 8) -> List[str]:
     """Generate storyboard prompts for visual scenes."""
-    
+
     if not script_text.strip():
+        print("[storyboard] ERROR: Empty script passed in.")
         return []
 
     # ----------------------------------------------------
-    # MOCK MODE: RETURN FREE, DETERMINISTIC PROMPTS
+    # MOCK MODE — deterministic, no API usage
     # ----------------------------------------------------
     if USE_MOCK_AI:
+        print(f"[storyboard:mock] Generating {num_images} mock storyboard prompts.")
         return [
             f"Mock symbolic scene #{i+1}: abstract metaphorical artwork based on the script."
             for i in range(num_images)
         ]
 
     # ----------------------------------------------------
-    # REAL MODE: Call OpenAI
+    # REAL MODE — OpenAI call
     # ----------------------------------------------------
+    print("[storyboard] Calling OpenAI to generate storyboard prompts...")
+
     api_key = require_env("OPENAI_API_KEY")
     client = OpenAI(api_key=api_key)
 
@@ -72,26 +76,36 @@ Script:
 Return ONLY a numbered list.
     """.strip()
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        max_tokens=900,
-        temperature=0.8,
-    )
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_tokens=900,
+            temperature=0.8,
+        )
+    except Exception as e:
+        print(f"[storyboard] ERROR calling OpenAI: {e}")
+        return []
 
     raw = (response.choices[0].message.content or "").strip()
 
-    # Parse numbered list
+    if not raw:
+        print("[storyboard] ERROR: Empty storyboard response from OpenAI.")
+        return []
+
+    # ----------------------------------------------------
+    # PARSE NUMBERED LIST
+    # ----------------------------------------------------
     prompts = []
     for line in raw.splitlines():
         line = line.strip()
         if not line:
             continue
 
-        # Remove leading "1. blah" or "1) blah"
+        # Remove leading "1. text" or "1) text"
         if line[0].isdigit():
             if "." in line:
                 line = line.split(".", 1)[1].strip()
@@ -100,5 +114,8 @@ Return ONLY a numbered list.
 
         if line:
             prompts.append(line)
+
+    if len(prompts) < num_images:
+        print(f"[storyboard] WARNING: Expected {num_images} prompts, got {len(prompts)}")
 
     return prompts[:num_images]
