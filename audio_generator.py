@@ -1,4 +1,4 @@
-#audio_generator.py
+# audio_generator.py
 
 import os
 import wave
