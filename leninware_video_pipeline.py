@@ -15,40 +15,54 @@ def create_leninware_video(
 ) -> str:
     """
     Pipeline:
-    - real mode: send assets to Shotstack and render full video
-    - mock mode: create a tiny dummy .mp4 with no external API calls
+    - mock mode: generate tiny placeholder MP4
+    - real mode: render via Shotstack
     """
+
+    print("\n[pipeline] ===== Video Pipeline Starting =====")
+    print(f"[pipeline] workdir: {workdir}")
+    print(f"[pipeline] audio path: {audio_path}")
+    print(f"[pipeline] image count: {len(image_paths)}")
 
     os.makedirs(workdir, exist_ok=True)
     video_path = os.path.join(workdir, "final.mp4")
 
     # ----------------------------------------------------
-    # MOCK MODE → generate a tiny placeholder MP4
+    # MOCK MODE
     # ----------------------------------------------------
     if USE_MOCK_AI:
-        print("[pipeline] MOCK: Creating placeholder video...")
+        print("[pipeline:mock] Mock mode enabled — skipping Shotstack.")
+        print(f"[pipeline:mock] Creating tiny placeholder MP4 at {video_path}")
 
-        # A minimal MP4 header for a valid zero-duration video
-        dummy_mp4 = (
-            b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42mp41"
-        )
+        try:
+            dummy_mp4 = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42mp41"
+            with open(video_path, "wb") as f:
+                f.write(dummy_mp4)
+        except Exception as e:
+            print(f"[pipeline:mock] ERROR writing dummy MP4: {e}")
+            raise
 
-        with open(video_path, "wb") as f:
-            f.write(dummy_mp4)
-
-        print("[pipeline] MOCK: Video complete:", video_path)
+        print("[pipeline:mock] Mock video complete.\n")
         return video_path
 
     # ----------------------------------------------------
-    # REAL MODE → use Shotstack
+    # REAL MODE — Shotstack renderer
     # ----------------------------------------------------
-    print("[pipeline] Rendering Shotstack video...")
-    render_video_with_shotstack(
-        audio_file=audio_path,
-        image_files=image_paths,
-        script_text=script_text,
-        output_video_path=video_path,
-    )
+    print("[pipeline] Real mode — invoking Shotstack renderer...")
+    print(f"[pipeline] Rendering with {len(image_paths)} images and audio.")
 
-    print("[pipeline] Video complete:", video_path)
+    try:
+        render_video_with_shotstack(
+            audio_file=audio_path,
+            image_files=image_paths,
+            script_text=script_text,
+            output_video_path=video_path,
+        )
+    except Exception as e:
+        print(f"[pipeline] ERROR during Shotstack render: {e}")
+        raise
+
+    print(f"[pipeline] Video rendering complete → {video_path}")
+    print("[pipeline] =====================================\n")
+
     return video_path
