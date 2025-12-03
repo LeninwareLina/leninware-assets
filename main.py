@@ -1,7 +1,5 @@
 # main.py
 
-raise SystemExit("RUNNING MAIN FROM: " + __file__)
-
 from youtube_ingest import get_recent_candidates
 from youtube_virality_worker import run_virality_pass
 from transcript_fetcher import fetch_transcript
