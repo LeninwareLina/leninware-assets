@@ -13,31 +13,45 @@ from config import USE_MOCK_AI, require_env, SHOTSTACK_API_URL
 
 
 def _encode_file(path: str) -> str:
-    with open(path, "rb") as f:
-        return base64.b64encode(f.read()).decode("ascii")
+    """Return base64 of a file with debug info on failure."""
+    try:
+        with open(path, "rb") as f:
+            return base64.b64encode(f.read()).decode("ascii")
+    except Exception as e:
+        print(f"[shotstack] ERROR reading file '{path}': {e}")
+        return ""
 
 
 def _get_wav_duration_seconds(path: str) -> float:
-    with closing(wave.open(path, "rb")) as wf:
-        frames = wf.getnframes()
-        rate = wf.getframerate()
-        return frames / float(rate or 1)
+    """Return audio length in seconds; fall back with logs."""
+    try:
+        with closing(wave.open(path, "rb")) as wf:
+            frames = wf.getnframes()
+            rate = wf.getframerate()
+            dur = frames / float(rate or 1)
+            print(f"[shotstack] Audio duration: {dur:.2f}s")
+            return dur
+    except Exception as e:
+        print(f"[shotstack] ERROR reading WAV duration: {e}")
+        return 0.0
 
 
 def _split_script(script_text: str, num_chunks: int) -> List[str]:
-    """
-    Wrap text to avoid extremely long lines, then chunk
-    into roughly equal groups for caption timing.
-    """
+    """Split captions into chunks with debug info."""
     if num_chunks <= 0:
+        print("[shotstack] WARNING: num_chunks <= 0, returning entire script once.")
         return [script_text]
 
     wrapped = textwrap.wrap(script_text.strip(), width=160)
     if not wrapped:
+        print("[shotstack] WARNING: Script too short or empty for wrapping.")
         return [""]
 
     num_chunks = min(num_chunks, len(wrapped))
     approx_size = len(wrapped) // num_chunks
+
+    print(f"[shotstack] Creating {num_chunks} caption chunks "
+          f"from {len(wrapped)} wrapped lines.")
 
     chunks = []
     idx = 0
@@ -64,45 +78,48 @@ def render_video_with_shotstack(
     """
 
     # ----------------------------------------------------
-    # MOCK MODE: NO NETWORK COST, NO SHOTSTACK, JUST A FAKE MP4
+    # MOCK MODE
     # ----------------------------------------------------
     if USE_MOCK_AI:
-        print("[shotstack:mock] Creating placeholder video (no Shotstack).")
-
-        # A tiny valid MP4 header — enough for mocks, avoids upload failures
+        print("[shotstack:mock] Generating placeholder video...")
         dummy_mp4 = (
             b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42mp41"
         )
-
         os.makedirs(os.path.dirname(output_video_path), exist_ok=True)
         with open(output_video_path, "wb") as f:
             f.write(dummy_mp4)
-
-        print("[shotstack:mock] Mock video written:", output_video_path)
+        print("[shotstack:mock] DONE:", output_video_path)
         return output_video_path
 
     # ----------------------------------------------------
-    # REAL SHOTSTACK MODE BELOW
+    # REAL SHOTSTACK MODE
     # ----------------------------------------------------
+    print("[shotstack] Starting real Shotstack render...")
     api_key = require_env("SHOTSTACK_API_KEY")
 
-    # 1. Audio duration
+    # 1. Compute audio duration
     audio_duration = _get_wav_duration_seconds(audio_file)
     if audio_duration <= 0:
-        audio_duration = 15.0  # fallback
+        print("[shotstack] WARNING: Invalid audio duration, using fallback 15s")
+        audio_duration = 15.0
 
     num_images = max(len(image_files), 1)
     segment_length = audio_duration / num_images
+    print(f"[shotstack] Rendering {num_images} frames at {segment_length:.2f}s each")
 
     # 2. Image clips
     image_clips = []
     t = 0.0
     for path in image_files:
+        if not os.path.exists(path):
+            print(f"[shotstack] WARNING: Missing image file: {path}")
+        encoded = _encode_file(path)
+
         image_clips.append(
             {
                 "asset": {
                     "type": "image",
-                    "src": f"data:image/png;base64,{_encode_file(path)}",
+                    "src": f"data:image/png;base64,{encoded}",
                 },
                 "start": round(t, 3),
                 "length": round(segment_length, 3),
@@ -112,9 +129,8 @@ def render_video_with_shotstack(
         t += segment_length
 
     # 3. Caption chunks
-    caption_clips = []
     chunks = _split_script(script_text, num_images)
-
+    caption_clips = []
     t = 0.0
     for chunk in chunks:
         caption_clips.append(
@@ -133,7 +149,7 @@ def render_video_with_shotstack(
         )
         t += segment_length
 
-    # 4. Payload
+    # 4. Payload assembly
     payload = {
         "timeline": {
             "background": "#000000",
@@ -157,32 +173,64 @@ def render_video_with_shotstack(
         "Content-Type": "application/json",
     }
 
-    print("[shotstack] Submitting render...")
-    resp = requests.post(SHOTSTACK_API_URL, json=payload, headers=headers)
-    resp.raise_for_status()
+    # 5. Submit render
+    print("[shotstack] Submitting render job...")
+    try:
+        resp = requests.post(SHOTSTACK_API_URL, json=payload, headers=headers)
+        resp.raise_for_status()
+        print("[shotstack] Render job accepted.")
+    except Exception as e:
+        print("[shotstack] ERROR submitting job:", e)
+        raise
 
-    render_id = resp.json()["response"]["id"]
+    data = resp.json()
+    if "response" not in data or "id" not in data["response"]:
+        print("[shotstack] ERROR: Unexpected Shotstack response:", data)
+        raise RuntimeError("Invalid Shotstack response")
+
+    render_id = data["response"]["id"]
     status_url = f"{SHOTSTACK_API_URL}/{render_id}"
+    print(f"[shotstack] Render ID: {render_id}")
 
-    # 5. Poll until done
+    # 6. Poll with timeout
+    timeout = time.time() + 60 * 10  # 10 minutes
+    attempt = 0
+
     while True:
-        status = requests.get(status_url, headers=headers).json()
-        s = status["response"]["status"]
+        attempt += 1
+        if time.time() > timeout:
+            raise TimeoutError("[shotstack] ERROR: Render timed out after 10 minutes.")
+
+        try:
+            status = requests.get(status_url, headers=headers).json()
+        except Exception as e:
+            print("[shotstack] ERROR polling status:", e)
+            time.sleep(3)
+            continue
+
+        s = status.get("response", {}).get("status", "unknown")
+        print(f"[shotstack] Poll #{attempt}: Status = {s}")
 
         if s == "done":
             url = status["response"]["url"]
-            print("[shotstack] Rendering complete. Downloading video...")
+            print("[shotstack] DONE — Downloading final video...")
             break
 
         if s in ("failed", "errored"):
+            print("[shotstack] ERROR: Render failed:", status)
             raise RuntimeError(f"Shotstack render failed: {status}")
 
-        print(f"[shotstack] Status: {s}... waiting...")
         time.sleep(3)
 
-    # 6. Download final MP4
-    video_bytes = requests.get(url).content
-    with open(output_video_path, "wb") as f:
-        f.write(video_bytes)
+    # 7. Download final video
+    try:
+        video_bytes = requests.get(url).content
+        os.makedirs(os.path.dirname(output_video_path), exist_ok=True)
+        with open(output_video_path, "wb") as f:
+            f.write(video_bytes)
+        print("[shotstack] Video saved:", output_video_path)
+    except Exception as e:
+        print("[shotstack] ERROR downloading final video:", e)
+        raise
 
     return output_video_path
