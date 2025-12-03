@@ -1,8 +1,11 @@
 import os
+import wave
 
-from openai import OpenAI
+from config import USE_MOCK_AI, require_env
 
-from config import require_env
+# Only import OpenAI if NOT in mock mode
+if not USE_MOCK_AI:
+    from openai import OpenAI
 
 # TTS model + voice config
 MODEL = "gpt-4o-mini-tts"
