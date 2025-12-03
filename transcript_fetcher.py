@@ -2,7 +2,10 @@
 
 import re
 import requests
-from config import TRANSCRIPT_API_V2_URL, TRANSCRIPT_API_KEY
+from config import TRANSCRIPT_API_KEY
+
+
+TRANSCRIPT_API_URL = "https://transcriptapi.com/v1/youtube"
 
 
 def _extract_video_id(url_or_id: str) -> str:
@@ -26,7 +29,7 @@ def _extract_video_id(url_or_id: str) -> str:
 
 def fetch_transcript(video_url_or_id: str) -> str | None:
     """
-    Attempts to fetch transcript.
+    Attempts to fetch transcript via TranscriptAPI /v1/youtube.
     Returns None if unavailable (safe for pipeline).
     """
     video_id = _extract_video_id(video_url_or_id)
@@ -35,15 +38,15 @@ def fetch_transcript(video_url_or_id: str) -> str | None:
         "Authorization": f"Bearer {TRANSCRIPT_API_KEY}"
     }
 
-    resp = requests.get(
-        TRANSCRIPT_API_V2_URL,
-        params={"video_id": video_id},
-        headers=headers,
-    )
+    params = {
+        # v1 endpoint uses video_url, not video_id
+        "video_url": f"https://www.youtube.com/watch?v={video_id}"
+    }
 
-    # Any error → treat as 'no transcript'
+    resp = requests.get(TRANSCRIPT_API_URL, params=params, headers=headers)
+
     if resp.status_code != 200:
-        print(f"[transcript] API error: {resp.text[:150]}")
+        print(f"[transcript] API error {resp.status_code}: {resp.text[:150]}")
         return None
 
     data = resp.json()
