@@ -1,9 +1,11 @@
 # leninware_commentary.py
 
 from pathlib import Path
-from openai import OpenAI
+from config import USE_MOCK_AI, require_env
 
-from config import require_env
+# Only import OpenAI if NOT in mock mode
+if not USE_MOCK_AI:
+    from openai import OpenAI
 
 PROMPT_PATH = Path("prompts/leninware_raw.txt")
 
@@ -20,10 +22,24 @@ def load_leninware_system_prompt() -> str:
 
 
 def generate_leninware_commentary(transcript: str) -> str:
-    """Generate Leninware commentary given a raw transcript."""
+    """Generate Leninware commentary (real or mock)."""
+
     if not transcript or not transcript.strip():
         raise ValueError("Empty transcript passed to Leninware commentary")
 
+    # ----------------------------------------------------
+    # MOCK MODE (free, no API calls)
+    # ----------------------------------------------------
+    if USE_MOCK_AI:
+        return (
+            "MOCK LENINWARE COMMENTARY:\n"
+            "The bourgeois media spreads its narratives once again. "
+            "This is placeholder commentary generated in mock mode."
+        )
+
+    # ----------------------------------------------------
+    # REAL MODE (OpenAI GPT-4.x)
+    # ----------------------------------------------------
     api_key = require_env("OPENAI_API_KEY")
     client = OpenAI(api_key=api_key)
 
