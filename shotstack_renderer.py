@@ -7,8 +7,9 @@ from contextlib import closing
 from typing import List
 import textwrap
 import requests
+import os
 
-from config import require_env, SHOTSTACK_API_URL
+from config import USE_MOCK_AI, require_env, SHOTSTACK_API_URL
 
 
 def _encode_file(path: str) -> str:
@@ -35,7 +36,6 @@ def _split_script(script_text: str, num_chunks: int) -> List[str]:
     if not wrapped:
         return [""]
 
-    # Cap number of chunks to number of wrapped lines
     num_chunks = min(num_chunks, len(wrapped))
     approx_size = len(wrapped) // num_chunks
 
@@ -45,7 +45,7 @@ def _split_script(script_text: str, num_chunks: int) -> List[str]:
         if i == num_chunks - 1:
             group = wrapped[idx:]
         else:
-            group = wrapped[idx : idx + approx_size]
+            group = wrapped[idx: idx + approx_size]
         idx += approx_size
         chunks.append(" ".join(group))
 
@@ -59,11 +59,31 @@ def render_video_with_shotstack(
     output_video_path: str,
 ) -> str:
     """
-    Render a video using Shotstack with:
-    - TTS audio
-    - Image sequence
-    - Captions synced to total length
+    Render a video using Shotstack.
+    MOCK MODE: Produce a tiny placeholder MP4 instead of doing an API call.
     """
+
+    # ----------------------------------------------------
+    # MOCK MODE: NO NETWORK COST, NO SHOTSTACK, JUST A FAKE MP4
+    # ----------------------------------------------------
+    if USE_MOCK_AI:
+        print("[shotstack:mock] Creating placeholder video (no Shotstack).")
+
+        # A tiny valid MP4 header — enough for mocks, avoids upload failures
+        dummy_mp4 = (
+            b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42mp41"
+        )
+
+        os.makedirs(os.path.dirname(output_video_path), exist_ok=True)
+        with open(output_video_path, "wb") as f:
+            f.write(dummy_mp4)
+
+        print("[shotstack:mock] Mock video written:", output_video_path)
+        return output_video_path
+
+    # ----------------------------------------------------
+    # REAL SHOTSTACK MODE BELOW
+    # ----------------------------------------------------
     api_key = require_env("SHOTSTACK_API_KEY")
 
     # 1. Audio duration
@@ -91,7 +111,7 @@ def render_video_with_shotstack(
         )
         t += segment_length
 
-    # 3. Caption chunks (same count as images)
+    # 3. Caption chunks
     caption_clips = []
     chunks = _split_script(script_text, num_images)
 
@@ -113,7 +133,7 @@ def render_video_with_shotstack(
         )
         t += segment_length
 
-    # 4. Shotstack payload
+    # 4. Payload
     payload = {
         "timeline": {
             "background": "#000000",
