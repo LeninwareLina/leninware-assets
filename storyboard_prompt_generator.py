@@ -1,8 +1,12 @@
 # storyboard_prompt_generator.py
 
 from typing import List
-from openai import OpenAI
-from config import require_env
+from config import USE_MOCK_AI, require_env
+
+# Only import OpenAI if NOT in mock mode
+if not USE_MOCK_AI:
+    from openai import OpenAI
+
 
 SYSTEM_PROMPT = """
 You are an AI storyboard artist creating symbolic illustrations for a political
@@ -29,10 +33,25 @@ Your job:
 Return a numbered list of prompts ONLY.
 """
 
+
 def generate_storyboard_prompts(script_text: str, num_images: int = 8) -> List[str]:
+    """Generate storyboard prompts for visual scenes."""
+    
     if not script_text.strip():
         return []
 
+    # ----------------------------------------------------
+    # MOCK MODE: RETURN FREE, DETERMINISTIC PROMPTS
+    # ----------------------------------------------------
+    if USE_MOCK_AI:
+        return [
+            f"Mock symbolic scene #{i+1}: abstract metaphorical artwork based on the script."
+            for i in range(num_images)
+        ]
+
+    # ----------------------------------------------------
+    # REAL MODE: Call OpenAI
+    # ----------------------------------------------------
     api_key = require_env("OPENAI_API_KEY")
     client = OpenAI(api_key=api_key)
 
@@ -64,13 +83,15 @@ Return ONLY a numbered list.
     )
 
     raw = (response.choices[0].message.content or "").strip()
-    prompts = []
 
+    # Parse numbered list
+    prompts = []
     for line in raw.splitlines():
         line = line.strip()
         if not line:
             continue
 
+        # Remove leading "1. blah" or "1) blah"
         if line[0].isdigit():
             if "." in line:
                 line = line.split(".", 1)[1].strip()
