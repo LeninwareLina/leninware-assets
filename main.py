@@ -17,7 +17,7 @@ from youtube_uploader import upload_video
 def main():
     print("\n=== Leninware Pipeline Starting ===\n")
 
-    # 1. Run virality worker
+    # 1. Get viral candidates
     candidates = run_virality_pass()
     if not candidates:
         print("[main] No viral videos found.")
@@ -33,14 +33,14 @@ def main():
     print(f"   Channel: {channel}")
     print(f"   URL: {url}")
 
-    # 2. Get transcript
+    # 2. Transcript
     print("\n[main] Fetching transcript...")
     transcript = fetch_transcript(url)
     if not transcript:
         print("[main] Transcript not available. Skipping.")
         return
 
-    # 3. Generate Leninware commentary
+    # 3. Leninware commentary
     print("\n[main] Generating Leninware commentary...")
     raw_commentary = generate_leninware_commentary(transcript)
 
@@ -55,15 +55,15 @@ def main():
         num_images=8,
     )
 
-    # 6. Optional string-rule safety for YouTube compliance
+    # 6. Apply substitution rules (YouTube-safe tweaks)
     print("\n[main] Applying substitution rules to prompts...")
     final_prompts = apply_safe_substitutions(storyboard_prompts)
 
-    # 7. Generate images (OpenAI)
+    # 7. Generate images
     print("\n[main] Generating images from storyboard prompts...")
     image_paths = generate_images_from_prompts(final_prompts)
 
-    # 8. Create final video with Shotstack
+    # 8. Create video via TTS + Shotstack
     print("\n[main] Creating final video...")
     video_path = create_leninware_video(
         safe_script_text=safe_commentary,
