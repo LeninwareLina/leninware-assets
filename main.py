@@ -15,15 +15,15 @@ from audio_generator import generate_tts_audio
 from leninware_video_pipeline import create_leninware_video
 
 from youtube_uploader import upload_video
+from config import USE_MOCK_AI
 
 
 def main():
     print("\n===== Leninware Pipeline Starting =====\n")
 
-    # 1. INGEST VIDEO CANDIDATES (SHORTS FILTERED IN INGEST)
+    # 1. INGEST VIDEO CANDIDATES
     print("[main] Fetching recent candidates...")
     candidates = get_recent_candidates(max_results=5)
-
     if not candidates:
         print("[main] No recent long-form videos found.")
         return
@@ -31,7 +31,6 @@ def main():
     # 2. VIRALITY RANKING
     print("[main] Running virality pass...")
     viral_list = run_virality_pass(candidates)
-
     if not viral_list:
         print("[main] No videos with usable stats.")
         return
@@ -62,40 +61,42 @@ def main():
     print("[main] Generating Leninware commentary...")
     raw_commentary = generate_leninware_commentary(transcript_text)
 
-    # 5. SCRIPT SAFETY FILTER
+    # 5. SAFETY FILTER
     print("[main] Applying script safety filter...")
     safe_script = apply_script_safety_filter(raw_commentary)
 
-    # 6. STORYBOARD
-    print("[main] Generating storyboard prompts...")
-    storyboard = generate_storyboard_prompts(safe_script)
+# 6. STORYBOARD
+print("[main] (6) Generating storyboard prompts...")
+storyboard = generate_storyboard_prompts(safe_script)
 
-    print("[main] Applying substitution safety filter...")
-    safe_prompts = apply_safe_substitutions(storyboard)
+# 7. IMAGE PROMPT SAFETY FILTER
+print("[main] (7) Applying substitution safety filter...")
+safe_prompts = apply_safe_substitutions(storyboard)
 
-    # 7. IMAGE GENERATION (silent)
-    print("[main] Generating images from prompts...")
-    image_paths = generate_images_from_prompts(safe_prompts)
+# 8. IMAGE GENERATION
+print("[main] (8) Generating images from prompts...")
+image_paths = generate_images_from_prompts(safe_prompts)
 
-    # 8. TTS AUDIO
-    print("[main] Generating TTS audio...")
-    audio_path = generate_tts_audio(
-        text=safe_script,
-        output_path="output/audio.wav"
-    )
+# 9. TTS AUDIO
+print("[main] (9) Generating TTS audio...")
+audio_path = generate_tts_audio(
+    text=safe_script,
+    output_path="output/audio.wav"
+)
 
-    # 9. VIDEO RENDER
-    print("[main] Rendering final Leninware video...")
-    video_path = create_leninware_video(
-        script_text=safe_script,
-        image_paths=image_paths,
-        audio_path=audio_path
-    )
+# 10. VIDEO RENDER
+print("[main] (10) Rendering final Leninware video...")
+video_path = create_leninware_video(
+    script_text=safe_script,
+    image_paths=image_paths,
+    audio_path=audio_path
+)
 
-    print(f"[main] Render complete: {video_path}")
-
-    # 10. UPLOAD
-    print("[main] Uploading to YouTube...")
+# 11. UPLOAD
+if USE_MOCK_AI:
+    print("[main] (11) MOCK MODE — Skipping YouTube upload.")
+else:
+    print("[main] (11) Uploading to YouTube...")
     upload_video(
         video_path,
         title=f"Leninware Reacts: {selected['title']}",
