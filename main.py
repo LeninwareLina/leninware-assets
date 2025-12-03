@@ -1,5 +1,3 @@
-# main.py
-
 from youtube_ingest import get_recent_candidates
 from youtube_virality_worker import run_virality_pass
 from transcript_fetcher import fetch_transcript
@@ -15,7 +13,7 @@ from audio_generator import generate_tts_audio
 from leninware_video_pipeline import create_leninware_video
 
 from youtube_uploader import upload_video
-from config import USE_MOCK_AI
+from config import USE_MOCK_AI, ENABLE_YOUTUBE_UPLOAD
 
 
 def main():
@@ -95,8 +93,8 @@ def main():
     print(f"[main] Render complete: {video_path}")
 
     # 11. UPLOAD
-    if USE_MOCK_AI:
-        print("[main] (11) MOCK MODE — Skipping YouTube upload.")
+    if not ENABLE_YOUTUBE_UPLOAD:
+        print("[main] (11) Upload disabled — skipping YouTube upload.")
     else:
         print("[main] (11) Uploading to YouTube...")
         upload_video(
