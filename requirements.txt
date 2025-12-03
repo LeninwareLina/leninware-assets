@@ -1,8 +1,9 @@
 #requirements.txt
-openai
-requests
-python-dotenv
-google-api-python-client
-google-auth
-google-auth-oauthlib
-isodate
+openai>=1.0
+requests>=2.31
+python-dotenv>=1.0
+google-api-python-client>=2.120
+google-auth>=2.23
+google-auth-oauthlib>=1.2
+google-auth-httplib2>=0.1
+isodate>=0.6
