@@ -2,11 +2,13 @@
 
 from typing import List, Optional
 
-from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
+from config import USE_MOCK_AI, require_env
 
-from config import require_env
+# Only import Google APIs if NOT in mock mode
+if not USE_MOCK_AI:
+    from google.oauth2.credentials import Credentials
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaFileUpload
 
 YOUTUBE_UPLOAD_SCOPE = "https://www.googleapis.com/auth/youtube.upload"
 TOKEN_URI = "https://oauth2.googleapis.com/token"
@@ -37,11 +39,26 @@ def upload_video(
     tags: Optional[List[str]] = None,
     privacy_status: str = "public",
 ) -> str:
-    """Upload a video file to YouTube.
-
-    Returns:
-        The uploaded video ID.
     """
+    Upload a video file to YouTube.
+
+    MOCK MODE:
+        - Skip upload entirely
+        - Return fake video ID
+        - Do NOT require OAuth or Google credentials
+    """
+
+    # ----------------------------------------------------
+    # MOCK MODE — skip YouTube upload
+    # ----------------------------------------------------
+    if USE_MOCK_AI:
+        fake_id = "MOCK_VIDEO_ID_12345"
+        print(f"[upload:mock] Skipping YouTube upload. Returning fake ID: {fake_id}")
+        return fake_id
+
+    # ----------------------------------------------------
+    # REAL MODE — upload to YouTube
+    # ----------------------------------------------------
     youtube = _get_youtube_client()
 
     body = {
