@@ -1,86 +1,56 @@
+# transcript_fetcher.py
+
 import re
-from typing import Optional
-
 import requests
-
-from config import require_env, TRANSCRIPT_API_V2_URL
-
-# Handles normal watch URLs, youtu.be and shorts links
-YOUTUBE_ID_RE = re.compile(
-    r"(?:v=|youtu\.be/|shorts/)([A-Za-z0-9_-]{11})"
-)
+from config import TRANSCRIPT_API_V2_URL, TRANSCRIPT_API_KEY
 
 
-def _extract_video_id(url: str) -> Optional[str]:
-    """Pull a YouTube video ID out of a URL or raw ID."""
-    # If it's already an 11-char ID, accept it
-    if re.fullmatch(r"[A-Za-z0-9_-]{11}", url):
-        return url
-
-    m = YOUTUBE_ID_RE.search(url)
-    if m:
-        return m.group(1)
-
-    return None
-
-
-def fetch_transcript(video_url: str) -> Optional[str]:
-    """Fetch a transcript for a YouTube video using TranscriptAPI.
-
-    Returns transcript text, or None if not available.
+def _extract_video_id(url_or_id: str) -> str:
     """
-    api_key = require_env("TRANSCRIPT_API_KEY")
+    Extracts YouTube video ID from various URL formats.
+    Assumes ingest has already filtered Shorts and non-standard formats.
+    """
+    patterns = [
+        r"v=([A-Za-z0-9_-]{6,})",
+        r"youtu\.be/([A-Za-z0-9_-]{6,})",
+        r"watch/([A-Za-z0-9_-]{6,})",
+    ]
+    for p in patterns:
+        m = re.search(p, url_or_id)
+        if m:
+            return m.group(1)
 
-    video_id = _extract_video_id(video_url)
-    if not video_id:
-        print(f"[transcript] Could not extract video id from URL: {video_url}")
-        return None
+    # If no match, assume raw ID
+    return url_or_id.strip()
 
-    try:
-        resp = requests.get(
-            TRANSCRIPT_API_V2_URL,
-            headers={"x-api-key": api_key},
-            params={"platform": "youtube", "video_id": video_id},
-            timeout=30,
-        )
-    except Exception as e:
-        print(f"[transcript] TranscriptAPI request error: {e}")
-        return None
 
-    if resp.status_code == 404:
-        print("[transcript] Transcript not found for this video")
-        return None
+def fetch_transcript(video_url_or_id: str) -> str | None:
+    """
+    Attempts to fetch transcript.
+    Returns None if unavailable (safe for pipeline).
+    """
+    video_id = _extract_video_id(video_url_or_id)
 
+    headers = {
+        "Authorization": f"Bearer {TRANSCRIPT_API_KEY}"
+    }
+
+    resp = requests.get(
+        TRANSCRIPT_API_V2_URL,
+        params={"video_id": video_id},
+        headers=headers,
+    )
+
+    # Any error → treat as 'no transcript'
     if resp.status_code != 200:
-        print(f"[transcript] TranscriptAPI error {resp.status_code}: {resp.text[:200]}")
+        print(f"[transcript] API error: {resp.text[:150]}")
         return None
 
-    try:
-        data = resp.json()
-    except ValueError:
-        print("[transcript] Non-JSON response from TranscriptAPI")
-        return None
+    data = resp.json()
 
-    # Flexibly handle different shapes: segments, lines, or raw transcript
-    transcript_text = ""
-
-    if isinstance(data, dict):
-        if isinstance(data.get("segments"), list):
-            parts = [seg.get("text", "") for seg in data["segments"]]
-            transcript_text = "\n".join(p for p in parts if p)
-        elif isinstance(data.get("lines"), list):
-            parts = [ln.get("text", "") for ln in data["lines"]]
-            transcript_text = "\n".join(p for p in parts if p)
-        elif isinstance(data.get("transcript"), str):
-            transcript_text = data["transcript"]
-        else:
-            transcript_text = str(data)
-    else:
-        transcript_text = str(data)
-
-    transcript_text = transcript_text.strip()
+    transcript_text = data.get("transcript")
     if not transcript_text:
-        print("[transcript] Empty transcript returned from TranscriptAPI")
+        print("[transcript] Transcript not available.")
         return None
 
     return transcript_text
