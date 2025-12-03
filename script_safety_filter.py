@@ -1,3 +1,4 @@
+#script_safety_filter.py
 from pathlib import Path
 from openai import OpenAI
 from config import require_env
