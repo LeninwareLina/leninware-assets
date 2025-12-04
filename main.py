@@ -4,6 +4,7 @@ from youtube_ingest import get_recent_candidates
 from youtube_virality_worker import run_virality_pass
 from transcript_fetcher import fetch_transcript
 
+from transcript_summary_filter import summarize_transcript
 from leninware_commentary import generate_leninware_commentary
 from script_safety_filter import apply_script_safety_filter
 
@@ -22,14 +23,14 @@ def main():
     print("\n===== Leninware Pipeline Starting =====\n")
 
     # 1. INGEST VIDEO CANDIDATES
-    print("[main] Fetching recent candidates...")
+    print("[main] (1) Fetching recent candidates...")
     candidates = get_recent_candidates(max_results=5)
     if not candidates:
         print("[main] No recent long-form videos found.")
         return
 
     # 2. VIRALITY RANKING
-    print("[main] Running virality pass...")
+    print("[main] (2) Running virality pass...")
     viral_list = run_virality_pass(candidates)
     if not viral_list:
         print("[main] No videos with usable stats.")
@@ -44,7 +45,7 @@ def main():
     transcript_text = None
 
     for v in viral_list:
-        print(f"\n[main] Checking transcript availability for: {v['title']}")
+        print(f"\n[main] (3) Checking transcript availability for: {v['title']}")
         tr = fetch_transcript(v["video_id"])
         if tr:
             transcript_text = tr
@@ -57,35 +58,39 @@ def main():
 
     print(f"\n[main] Selected video:\n    Title: {selected['title']}\n    URL: {selected['url']}\n")
 
-    # 4. LENINWARE COMMENTARY
-    print("[main] Generating Leninware commentary...")
-    raw_commentary = generate_leninware_commentary(transcript_text)
+    # 4. TRANSCRIPT SUMMARY (NEW)
+    print("[main] (4) Summarizing transcript...")
+    summary_text = summarize_transcript(transcript_text)
 
-    # 5. SAFETY FILTER
-    print("[main] Applying script safety filter...")
+    # 5. GENERATE LENINWARE COMMENTARY FROM SUMMARY
+    print("[main] (5) Generating Leninware commentary from summary...")
+    raw_commentary = generate_leninware_commentary(summary_text)
+
+    # 6. SAFETY FILTER
+    print("[main] (6) Applying script safety filter...")
     safe_script = apply_script_safety_filter(raw_commentary)
 
-    # 6. STORYBOARD
-    print("[main] (6) Generating storyboard prompts...")
+    # 7. STORYBOARD
+    print("[main] (7) Generating storyboard prompts...")
     storyboard = generate_storyboard_prompts(safe_script)
 
-    # 7. IMAGE PROMPT SAFETY FILTER
-    print("[main] (7) Applying substitution safety filter...")
+    # 8. IMAGE PROMPT SAFETY FILTER
+    print("[main] (8) Applying substitution safety filter...")
     safe_prompts = apply_safe_substitutions(storyboard)
 
-    # 8. IMAGE GENERATION
-    print("[main] (8) Generating images from prompts...")
+    # 9. IMAGE GENERATION
+    print("[main] (9) Generating images from prompts...")
     image_paths = generate_images_from_prompts(safe_prompts)
 
-    # 9. TTS AUDIO
-    print("[main] (9) Generating TTS audio...")
+    # 10. TTS AUDIO
+    print("[main] (10) Generating TTS audio...")
     audio_path = generate_tts_audio(
         text=safe_script,
         output_path="output/audio.wav"
     )
 
-    # 10. VIDEO RENDER
-    print("[main] (10) Rendering final Leninware video...")
+    # 11. VIDEO RENDER
+    print("[main] (11) Rendering final Leninware video...")
     video_path = create_leninware_video(
         script_text=safe_script,
         image_paths=image_paths,
@@ -94,13 +99,13 @@ def main():
 
     print(f"[main] Render complete: {video_path}")
 
-    # 11. UPLOAD
+    # 12. UPLOAD
     if USE_MOCK_AI:
-        print("[main] (11) MOCK MODE — upload disabled automatically.")
+        print("[main] (12) MOCK MODE — upload disabled automatically.")
     elif not ENABLE_YOUTUBE_UPLOAD:
-        print("[main] (11) Upload disabled — skipping YouTube upload.")
+        print("[main] (12) Upload disabled — skipping YouTube upload.")
     else:
-        print("[main] (11) Uploading to YouTube...")
+        print("[main] (12) Uploading to YouTube...")
         upload_video(
             video_path,
             title=f"Leninware Reacts: {selected['title']}",
