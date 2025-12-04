@@ -1,7 +1,6 @@
 # transcript_summary_filter.py
 
 from typing import Optional
-
 from config import USE_MOCK_AI, require_env
 
 # Only import OpenAI if NOT in mock mode
@@ -146,4 +145,3 @@ Transcript:
 
     print(f"[summary] Summary generated ({len(content)} chars).")
     return content
-```0
