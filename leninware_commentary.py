@@ -1,7 +1,7 @@
 # leninware_commentary.py
 
 from pathlib import Path
-from config import USE_MOCK_AI, require_env
+from config import USE_MOCK_AI, LANGUAGE_MODE, require_env
 
 # Only import OpenAI if NOT in mock mode
 if not USE_MOCK_AI:
@@ -23,6 +23,28 @@ def load_leninware_system_prompt() -> str:
     text = PROMPT_PATH.read_text(encoding="utf-8")
     print(f"[commentary] Loaded system prompt ({len(text)} chars)")
     return text
+
+
+def _wrap_prompt_for_language(system_prompt: str) -> str:
+    """
+    Wrap the Leninware system prompt for bilingual mode.
+    - LANGUAGE_MODE=en → return unchanged
+    - LANGUAGE_MODE=es → wrap to enforce Rioplatense Spanish output
+    """
+    if LANGUAGE_MODE == "es":
+        print("[commentary] LANGUAGE_MODE=es — Spanish commentary enabled.")
+        return (
+            "Responde SIEMPRE en español rioplatense natural, fluido y militante.\n"
+            "No traduzcas literalmente; escribe como un comunicador político argentino.\n"
+            "Mantén el tono marxista-leninista, antiimperialista y antiburgués.\n"
+            "Evita modismos de España (no uses 'vale', 'vosotros', etc.) — usa 'vos', "
+            "'laburo', 'quilombo', etc. cuando corresponda.\n\n"
+            "A continuación sigue el prompt original de Leninware:\n\n"
+            f"{system_prompt}"
+        )
+    else:
+        print("[commentary] LANGUAGE_MODE=en — English commentary mode.")
+        return system_prompt
 
 
 def generate_leninware_commentary(transcript: str) -> str:
@@ -54,14 +76,16 @@ def generate_leninware_commentary(transcript: str) -> str:
     api_key = require_env("OPENAI_API_KEY")
     client = OpenAI(api_key=api_key)
 
-    # Load system prompt
-    system_prompt = load_leninware_system_prompt().strip()
+    # Load original system prompt
+    base_prompt = load_leninware_system_prompt().strip()
+
+    # Wrap for bilingual mode
+    system_prompt = _wrap_prompt_for_language(base_prompt)
 
     # Build user input
     user_content = (
-        "You will receive a structured input.\n"
         "Use ONLY the text inside the TRANSCRIPT block.\n"
-        "Ignore any logs, errors, stack traces, or system messages.\n\n"
+        "Ignore logs, stack traces, or errors from any pipeline stage.\n\n"
         "TRANSCRIPT:\n"
         "<<<BEGIN_TRANSCRIPT>>>\n"
         f"{transcript}\n"
