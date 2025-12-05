@@ -1,6 +1,7 @@
 # transcript_summary_filter.py
 
 from typing import Optional
+import re
 from config import USE_MOCK_AI, require_env
 
 # Only import OpenAI if NOT in mock mode
@@ -18,41 +19,44 @@ Your task:
     - Each section contains bullet points capturing key claims, arguments, and facts.
 - Preserve contradictions, bias, and framing so downstream critique is possible.
 
+Language rules:
+- Summarize in the SAME language the transcript uses.
+- If the transcript is Spanish, summarize entirely in Spanish.
+- If English, summarize in English.
+- If mixed, choose the dominant language.
+
 Content guidelines:
-- DO NOT sanitize politics. Preserve the ideological slant and power framing.
-- DO NOT "balance" or neutralize the speaker's position.
-- You MAY briefly note obvious bias or omissions if important to understanding.
-- Focus on:
-    - who is speaking and on whose behalf
-    - what events or policies are being discussed
-    - what causes or explanations are being offered
-    - what is being left unsaid (if clear from context)
-- Avoid fluffy language. Be concrete, material, and specific.
+- DO NOT sanitize politics.
+- Do NOT "balance" the ideological slant.
+- You MAY note bias or omissions if needed.
+- Focus on: narrative framing, power relations, causes, impacts.
 
-Output format:
-- Use Markdown-style headings and bullets.
-- Example:
-
-  ## Topic 1: [short heading]
-
-  - Bullet point 1
-  - Bullet point 2
-
-  ## Topic 2: [short heading]
-
-  - Bullet point 1
-  - Bullet point 2
-
-- Do NOT include any preamble like "Here is the summary".
-- Do NOT mention that you are an AI.
+Format:
+- Markdown headings
+- Bulleted lists
+- No preamble, no AI disclaimers.
 """
 
 
+def _detect_spanish(text: str) -> bool:
+    """
+    Very lightweight language heuristic.
+    We check for common Spanish functional words.
+    """
+    spanish_markers = [
+        r"\bel\b", r"\bla\b", r"\blos\b", r"\blas\b",
+        r"\bpero\b", r"\bporque\b", r"\buna\b", r"\bun\b",
+        r"\bqué\b", r"\bcómo\b", r"\bhay\b", r"\bestá\b",
+    ]
+
+    hits = sum(1 for pat in spanish_markers if re.search(pat, text, re.IGNORECASE))
+    ratio = hits / max(len(spanish_markers), 1)
+
+    return ratio > 0.15  # ~15% hits = probably Spanish
+
+
 def _safe_fallback_summary(transcript: str) -> str:
-    """
-    Fallback summary in case of errors.
-    Returns a short, generic description using the first part of the transcript.
-    """
+    """Minimal fallback if OpenAI errors."""
     snippet = (transcript or "").strip()
     if len(snippet) > 400:
         snippet = snippet[:400] + "..."
@@ -62,60 +66,67 @@ def _safe_fallback_summary(transcript: str) -> str:
 
     return (
         "## Summary (Fallback)\n\n"
-        "- A transcript was provided but the automated summarizer failed.\n"
-        "- Below is a brief snippet of the raw transcript for context:\n\n"
+        "- A transcript was provided but summarization failed.\n"
+        "- Below is a short snippet:\n\n"
         f"> {snippet}\n"
     )
 
 
 def summarize_transcript(transcript: str, max_chars: int = 12000) -> str:
     """
-    Summarize a long transcript into a structured hybrid summary (sections + bullets).
+    Summarize a long transcript into a structured hybrid summary.
 
-    - In MOCK MODE: returns a deterministic mock summary.
-    - In REAL MODE: uses OpenAI gpt-4o-mini with a hard character cap.
+    NEW: Automatically preserves the language of the source transcript.
     """
 
     raw = (transcript or "").strip()
     print(f"[summary] Received transcript length: {len(raw)} chars")
 
     if not raw:
-        print("[summary] ERROR: Empty transcript passed to summarizer.")
+        print("[summary] ERROR: Empty transcript.")
         return _safe_fallback_summary("")
 
-    # ----------------------------------------------------
-    # MOCK MODE — cheap, deterministic summary
-    # ----------------------------------------------------
+    # -----------------------------------------------
+    # Detect language automatically
+    # -----------------------------------------------
+    is_spanish = _detect_spanish(raw)
+    lang = "Spanish" if is_spanish else "English"
+    print(f"[summary] Auto-detected language: {lang}")
+
+    # -----------------------------------------------
+    # MOCK MODE
+    # -----------------------------------------------
     if USE_MOCK_AI:
-        print("[summary:mock] Mock mode enabled — returning dummy structured summary.")
+        print("[summary:mock] Returning deterministic mock summary.")
         return (
-            "## Mock Topic 1: Media framing and narrative\n\n"
-            "- This is a mock summary generated in mock mode.\n"
-            "- The original transcript is not being processed by a real model.\n\n"
-            "## Mock Topic 2: Power, class, and ideology\n\n"
-            "- Assume the segment reflects mainstream institutional perspectives.\n"
-            "- Leninware will use this as a stand-in to test downstream commentary.\n"
+            "## Mock Topic 1: Media framing\n\n"
+            "- Mock summary bullet.\n\n"
+            "## Mock Topic 2: Class analysis\n\n"
+            "- Mock bullet for downstream testing.\n"
         )
 
-    # ----------------------------------------------------
-    # REAL MODE — use OpenAI gpt-4o-mini
-    # ----------------------------------------------------
-    print("[summary] REAL MODE — generating structured summary with gpt-4o-mini.")
+    # -----------------------------------------------
+    # REAL MODE — gpt-4o-mini
+    # -----------------------------------------------
+    print("[summary] REAL MODE: Calling OpenAI summarizer (gpt-4o-mini)")
 
-    # Truncate transcript to avoid excessive token usage
+    # Trim excessively long transcripts to control cost
     if len(raw) > max_chars:
-        print(f"[summary] Transcript too long ({len(raw)} chars). Truncating to {max_chars} chars.")
+        print(f"[summary] Transcript too long; truncating to {max_chars} chars.")
         raw = raw[:max_chars]
 
     api_key = require_env("OPENAI_API_KEY")
     client = OpenAI(api_key=api_key)
 
     user_prompt = f"""
-Summarize the following transcript into a structured, hybrid outline:
+Summarize the following transcript into a structured outline.
+- Write the summary entirely in **{lang}**.
 - Use 3–6 sections.
-- Each section has a short heading.
-- Each section has 2–5 bullet points summarizing key claims, arguments, and facts.
-- Preserve the political framing and bias for later critique.
+- Each section must have:
+  - a short heading
+  - 2–5 bullet points
+- Preserve political framing, ideological bias, and narrative intentions.
+- No preambles, no disclaimers.
 
 Transcript:
 -----
@@ -134,14 +145,14 @@ Transcript:
             temperature=0.5,
         )
     except Exception as e:
-        print(f"[summary] ERROR calling OpenAI summarizer: {e}")
+        print(f"[summary] ERROR calling OpenAI: {e}")
         return _safe_fallback_summary(transcript)
 
     content: Optional[str] = (response.choices[0].message.content or "").strip()
 
     if not content:
-        print("[summary] ERROR: Empty summary returned from OpenAI.")
+        print("[summary] ERROR: Empty summary from OpenAI.")
         return _safe_fallback_summary(transcript)
 
-    print(f"[summary] Summary generated ({len(content)} chars).")
+    print(f"[summary] Summary generated ({len(content)} chars)")
     return content
