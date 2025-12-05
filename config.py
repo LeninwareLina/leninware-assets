@@ -1,4 +1,4 @@
-# config.py
+#config.py
 
 import os
 
@@ -16,6 +16,14 @@ def require_env(name: str) -> str:
 #   mock Shotstack, mock YouTube upload.
 # ---------------------------------------------------------
 USE_MOCK_AI = os.getenv("USE_MOCK_AI", "false").lower() == "true"
+
+
+# ---------------------------------------------------------
+#   LANGUAGE MODE (NEW)
+#   LANGUAGE_MODE=es  → Spanish (Rioplatense) commentary + TTS
+#   LANGUAGE_MODE=en  → English mode (default)
+# ---------------------------------------------------------
+LANGUAGE_MODE = os.getenv("LANGUAGE_MODE", "en").lower()
 
 
 # ---------------------------------------------------------
