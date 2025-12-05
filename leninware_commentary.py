@@ -47,7 +47,7 @@ def generate_leninware_commentary(transcript: str) -> str:
         )
 
     # ----------------------------------------------------
-    # REAL MODE
+    # REAL MODE — now uses gpt-4o-mini (cheap + stable)
     # ----------------------------------------------------
     print("[commentary] Real mode enabled — Calling OpenAI GPT")
 
@@ -69,11 +69,11 @@ def generate_leninware_commentary(transcript: str) -> str:
     )
 
     print("[commentary] Sending request to OpenAI...")
-    print("[commentary] Model=gpt-4.1, max_tokens=900, temp=0.8")
+    print("[commentary] Model=gpt-4o-mini, max_tokens=900, temp=0.8")
 
     try:
         resp = client.chat.completions.create(
-            model="gpt-4.1",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
