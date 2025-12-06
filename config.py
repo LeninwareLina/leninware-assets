@@ -1,5 +1,3 @@
-#config.py
-
 import os
 
 
@@ -12,24 +10,26 @@ def require_env(name: str) -> str:
 
 # ---------------------------------------------------------
 #   GLOBAL MOCK FLAG
-#   USE_MOCK_AI=true → mock OpenAI, mock ingest, mock transcript,
-#   mock Shotstack, mock YouTube upload.
 # ---------------------------------------------------------
 USE_MOCK_AI = os.getenv("USE_MOCK_AI", "false").lower() == "true"
 
 
 # ---------------------------------------------------------
 #   LANGUAGE MODE (NEW)
-#   LANGUAGE_MODE=es  → Spanish (Rioplatense) commentary + TTS
-#   LANGUAGE_MODE=en  → English mode (default)
+#   LANGUAGE_MODE=es → Spanish mode
+#   LANGUAGE_MODE=en → English mode (default)
+#
+#   BACKWARD COMPATIBILITY:
+#   LENINWARE_LANG_MODE is kept so old imports don't crash.
 # ---------------------------------------------------------
 LANGUAGE_MODE = os.getenv("LANGUAGE_MODE", "en").lower()
+
+# Legacy alias so existing modules importing this DO NOT CRASH
+LENINWARE_LANG_MODE = LANGUAGE_MODE
 
 
 # ---------------------------------------------------------
 #   YOUTUBE UPLOAD TOGGLE
-#   ENABLE_YOUTUBE_UPLOAD=true → actually upload to YouTube.
-#   Keeps uploads disabled even when USE_MOCK_AI=false.
 # ---------------------------------------------------------
 ENABLE_YOUTUBE_UPLOAD = os.getenv("ENABLE_YOUTUBE_UPLOAD", "false").lower() == "true"
 
@@ -66,10 +66,6 @@ else:
 
 # ---------------------------------------------------------
 #   YouTube Upload (OAuth)
-#   These MUST match Railway:
-#       GOOGLE_CLIENT_ID
-#       GOOGLE_CLIENT_SECRET
-#       GOOGLE_REFRESH_TOKEN
 # ---------------------------------------------------------
 if USE_MOCK_AI:
     YOUTUBE_CLIENT_ID = "mock"
