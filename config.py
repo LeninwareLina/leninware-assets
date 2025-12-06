@@ -1,3 +1,4 @@
+# config.py
 import os
 
 
@@ -15,17 +16,15 @@ USE_MOCK_AI = os.getenv("USE_MOCK_AI", "false").lower() == "true"
 
 
 # ---------------------------------------------------------
-#   LANGUAGE MODE (NEW)
-#   LANGUAGE_MODE=es → Spanish mode
-#   LANGUAGE_MODE=en → English mode (default)
-#
-#   BACKWARD COMPATIBILITY:
-#   LENINWARE_LANG_MODE is kept so old imports don't crash.
+#   LANGUAGE MODE
+#   LANGUAGE_MODE=es → Spanish output
+#   LANGUAGE_MODE=en → English output (default)
 # ---------------------------------------------------------
 LANGUAGE_MODE = os.getenv("LANGUAGE_MODE", "en").lower()
 
-# Legacy alias so existing modules importing this DO NOT CRASH
-LENINWARE_LANG_MODE = LANGUAGE_MODE
+# Neutral legacy alias
+# (used only if older modules referenced it; can be removed later)
+LEGACY_LANGUAGE_MODE = LANGUAGE_MODE
 
 
 # ---------------------------------------------------------
@@ -44,7 +43,7 @@ else:
 
 
 # ---------------------------------------------------------
-#   TranscriptAPI
+#   Transcript API
 # ---------------------------------------------------------
 if USE_MOCK_AI:
     TRANSCRIPT_API_KEY = "mock"
